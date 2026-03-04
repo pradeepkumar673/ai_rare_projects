@@ -1,11 +1,14 @@
- 
 from flask import Blueprint, request, jsonify, current_app, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_caching import Cache
 from bson.objectid import ObjectId
 from werkzeug.utils import secure_filename
 import os
-from datetime import datetime
-import io
+import tempfile
+from datetime import datetime, timezone
+import numpy as np
 
 from models.structured_model import StructuredPredictor
 from models.image_model import ImagePredictor
@@ -15,71 +18,114 @@ from utils.preprocessing import normalize_symptoms
 from utils.explainability import generate_shap_plot
 from utils.report_generator import generate_pdf_report
 from utils.triage import assess_risk
+from schemas import DiagnosisInput, validate_with_pydantic
+from celery_app import generate_pdf_async, notify_user_task
 
 diagnosis_bp = Blueprint('diagnosis', __name__)
 
-# Load models once (at startup)
-structured_predictor = StructuredPredictor(
-    rf_path=current_app.config['STRUCTURED_MODEL_PATH'],
-    xgb_path=current_app.config['XGB_MODEL_PATH'],
-    encoder_path=current_app.config['LABEL_ENCODER_PATH'],
-    feature_names_path=current_app.config['FEATURE_NAMES_PATH']
-)
-image_predictor = ImagePredictor(current_app.config['IMAGE_MODEL_PATH'])
-fusion = MultimodalFusion()
-kg = KnowledgeGraph()  # or load from json
+# Rate limiter (already configured in app)
+limiter = Limiter(key_func=get_remote_address)
+cache = Cache()
+
+# Load models (with error handling)
+structured_predictor = None
+image_predictor = None
+fusion = None
+kg = None
+
+def load_models():
+    global structured_predictor, image_predictor, fusion, kg
+    try:
+        structured_predictor = StructuredPredictor(
+            rf_path=current_app.config['STRUCTURED_MODEL_PATH'],
+            xgb_path=current_app.config['XGB_MODEL_PATH'],
+            encoder_path=current_app.config['LABEL_ENCODER_PATH'],
+            feature_names_path=current_app.config['FEATURE_NAMES_PATH']
+        )
+    except FileNotFoundError as e:
+        current_app.logger.error(f"Structured model missing: {e}")
+        structured_predictor = None
+
+    try:
+        image_predictor = ImagePredictor(current_app.config['IMAGE_MODEL_PATH'])
+    except Exception as e:
+        current_app.logger.error(f"Image model missing: {e}")
+        image_predictor = None
+
+    fusion = MultimodalFusion()
+    kg = KnowledgeGraph(cache_path='kg_cache.pkl')  # uses synonym map if available
+
+@diagnosis_bp.before_app_request
+def before_first_request():
+    load_models()
 
 @diagnosis_bp.route('/predict', methods=['POST'])
 @jwt_required()
+@limiter.limit("10 per minute")
 def predict():
     user_id = get_jwt_identity()
-    data = request.form  # since we may have image file
-    symptoms = data.getlist('symptoms[]')  # expects multiple values
+
+    # Validate input using Pydantic
+    data = request.form
+    files = request.files
+    try:
+        validated = DiagnosisInput(
+            symptoms=data.getlist('symptoms[]'),
+            age=data.get('age', type=int),
+            gender=data.get('gender'),
+            ethnicity=data.get('ethnicity'),
+            region=data.get('region'),
+            consent=data.get('consent') == 'true',
+            image=files.get('image')
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+    if not validated.consent:
+        return jsonify({'error': 'Consent must be given'}), 400
+
+    if structured_predictor is None:
+        return jsonify({'error': 'Model not available'}), 503
+
+    symptoms = normalize_symptoms(validated.symptoms)
     demographics = {
-        'age': data.get('age'),
-        'gender': data.get('gender'),
-        'ethnicity': data.get('ethnicity'),
-        'region': data.get('region')
+        'age': validated.age,
+        'gender': validated.gender,
+        'ethnicity': validated.ethnicity,
+        'region': validated.region
     }
-    image_file = request.files.get('image')
 
-    # Normalize symptom names (e.g., to lowercase, strip)
-    symptoms = [s.strip().lower() for s in symptoms if s]
-
-    # 1. Structured prediction
+    # Structured prediction
     structured_top5 = structured_predictor.predict_top5(symptoms, demographics)
     structured_proba_full = structured_predictor.predict_proba(symptoms, demographics)
 
-    # 2. Image prediction (if provided)
+    # Image prediction (if provided)
     image_result = None
     image_proba_full = None
-    image_disease_map = None  # we need to map image classes to structured diseases
-    if image_file:
-        # Save temporarily
-        filename = secure_filename(image_file.filename)
-        temp_path = os.path.join('/tmp', filename)
-        image_file.save(temp_path)
-        with open(temp_path, 'rb') as f:
-            disease, conf, probs, heatmap = image_predictor.predict(f)
-        os.remove(temp_path)
+    image_idx_to_name = None
+    if validated.image and image_predictor:
+        # Save uploaded file to temp
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            validated.image.save(tmp.name)
+            with open(tmp.name, 'rb') as f:
+                disease, conf, probs, heatmap = image_predictor.predict(f)
+            os.unlink(tmp.name)
         image_result = {
             'disease': disease,
             'confidence': conf,
-            'heatmap': heatmap.tolist()  # or encode as base64 later
+            'heatmap': heatmap.tolist()
         }
         image_proba_full = probs
-        # Map image disease to structured disease name (simplified)
-        # In practice, you'd have a dictionary like: {'Melanoma': 'UMLS:C0025202_melanoma', ...}
-        # For now, we'll skip mapping and not use image in fusion.
-        image_disease_map = None
+        # Map image indices to structured disease names
+        image_idx_to_name = {i: disease for i, disease in image_predictor.idx_to_disease.items()}
 
-    # 3. Fuse if both available
-    if image_proba_full is not None and image_disease_map is not None:
+    # Fusion
+    if image_proba_full is not None and image_idx_to_name is not None:
         fused_proba, agreement = fusion.fuse(
             structured_proba_full,
             image_proba_full,
             structured_predictor.le.classes_.tolist(),
-            image_disease_map
+            image_idx_to_name
         )
         # Get top5 from fused
         top5_idx = np.argsort(fused_proba)[-5:][::-1]
@@ -88,19 +134,29 @@ def predict():
         final_top5 = list(zip(top5_diseases, top5_proba))
     else:
         final_top5 = structured_top5
-        agreement = 'image_not_used' if image_file else 'structured_only'
+        agreement = 'image_not_used' if validated.image else 'structured_only'
 
-    # 4. Knowledge graph enhancement (optional ranking adjustment)
+    # Knowledge graph enhancement
     kg_diseases = kg.get_related_diseases(symptoms)
-    # Could use kg_diseases to re‑rank final_top5, but for now just include
+    # Re‑rank final_top5 using KG scores (if any)
+    kg_dict = {d: s for d, s in kg_diseases}
+    max_kg = max(kg_dict.values()) if kg_dict else 1.0
+    reranked = []
+    for disease, prob in final_top5:
+        kg_score = kg_dict.get(disease, 0.0)
+        new_score = prob * (1 + kg_score / max_kg) if max_kg else prob
+        reranked.append((disease, new_score))
+    # Sort again
+    reranked.sort(key=lambda x: x[1], reverse=True)
+    final_top5 = reranked[:5]
 
-    # 5. Risk assessment based on top confidence and urgency rules
+    # Risk assessment
     risk_level, urgency = assess_risk(final_top5[0][1], symptoms, demographics)
 
-    # 6. Generate SHAP explanations
+    # SHAP explanations
     shap_top = structured_predictor.explain(symptoms, demographics)
 
-    # 7. Save diagnosis record
+    # Save diagnosis record
     diagnosis_record = {
         'user_id': ObjectId(user_id),
         'symptoms': symptoms,
@@ -113,13 +169,23 @@ def predict():
         'agreement': agreement,
         'kg_suggestions': kg_diseases[:5],
         'shap_explanations': shap_top,
-        'created_at': datetime.utcnow()
+        'consent': validated.consent,
+        'created_at': datetime.now(timezone.utc)
     }
     result = current_app.db.diagnoses.insert_one(diagnosis_record)
     diagnosis_id = str(result.inserted_id)
 
-    # 8. Generate PDF report (async in production)
-    pdf_path = generate_pdf_report(diagnosis_record, diagnosis_id, current_app.config['PDF_REPORT_DIR'])
+    # Async PDF generation and notification
+    generate_pdf_async.delay(diagnosis_record, diagnosis_id)
+
+    # Audit log
+    current_app.db.audit_logs.insert_one({
+        'action': 'diagnosis_predict',
+        'user_id': ObjectId(user_id),
+        'diagnosis_id': result.inserted_id,
+        'ip': request.remote_addr,
+        'ts': datetime.now(timezone.utc)
+    })
 
     return jsonify({
         'diagnosis_id': diagnosis_id,
@@ -134,13 +200,13 @@ def predict():
 
 @diagnosis_bp.route('/report/<diagnosis_id>', methods=['GET'])
 @jwt_required()
+@cache.cached(timeout=300, query_string=True)
 def get_report(diagnosis_id):
-    # Check if user owns this diagnosis or is doctor
     user_id = get_jwt_identity()
     diagnosis = current_app.db.diagnoses.find_one({'_id': ObjectId(diagnosis_id)})
     if not diagnosis:
         return jsonify({'error': 'Not found'}), 404
-    # Authorization: either patient who owns it or doctor
+
     user = current_app.db.users.find_one({'_id': ObjectId(user_id)})
     if str(diagnosis['user_id']) != user_id and user['role'] != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
@@ -148,5 +214,14 @@ def get_report(diagnosis_id):
     pdf_path = os.path.join(current_app.config['PDF_REPORT_DIR'], f'diagnosis_{diagnosis_id}.pdf')
     if not os.path.exists(pdf_path):
         return jsonify({'error': 'Report not generated yet'}), 404
+
+    # Audit log
+    current_app.db.audit_logs.insert_one({
+        'action': 'download_report',
+        'user_id': ObjectId(user_id),
+        'diagnosis_id': ObjectId(diagnosis_id),
+        'ip': request.remote_addr,
+        'ts': datetime.now(timezone.utc)
+    })
 
     return send_file(pdf_path, as_attachment=True, download_name=f'report_{diagnosis_id}.pdf')

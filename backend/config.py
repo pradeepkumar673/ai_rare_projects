@@ -1,4 +1,3 @@
- 
 import os
 
 class Config:
@@ -18,7 +17,20 @@ class Config:
     FEATURE_NAMES_PATH = os.path.join(MODEL_PATH, 'feature_names.pkl')
     IMAGE_MODEL_PATH = os.path.join(MODEL_PATH, 'efficientnet_b3_ham10000.pth')
 
+    # CORS
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
+
+    # Rate limiting
+    RATELIMIT_DEFAULT = "200 per day, 10 per hour"
+    RATELIMIT_STORAGE_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+    # Async
+    REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    CELERY_BROKER_URL = REDIS_URL
+    CELERY_RESULT_BACKEND = REDIS_URL
+
     # Other
-    DEBUG = True
+    DEBUG = False
     PDF_REPORT_DIR = './reports'
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
+    UPLOAD_TEMP_DIR = '/tmp'
