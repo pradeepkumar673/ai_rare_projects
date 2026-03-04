@@ -5,7 +5,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Attach JWT token to every request
+// Attach JWT token to every request.
+// Read from localStorage key 'token' which is set by authStore.setAuth()
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
@@ -14,13 +15,16 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 globally → clear token and redirect
+// Handle 401 globally → clear token and redirect to login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token')
-      window.location.href = '/login'
+      // Only redirect if not already on an auth page
+      if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(err)
   }
@@ -62,6 +66,7 @@ export const authApi = {
     api.post<AuthResponse>('/auth/login', payload),
   register: (payload: RegisterPayload) =>
     api.post<AuthResponse>('/auth/register', payload),
+  // /auth/me returns the User shape directly
   me: () => api.get<User>('/auth/me'),
 }
 
@@ -101,17 +106,24 @@ export interface DiagnoseResponse {
 export const diagnosisApi = {
   diagnose: (payload: DiagnosePayload) => {
     const form = new FormData()
+
+    // Append consent=true (backend requires it)
+    form.append('consent', 'true')
+
     Object.entries(payload).forEach(([key, val]) => {
       if (val === undefined || val === null) return
       if (key === 'symptoms' && Array.isArray(val)) {
-        val.forEach((s) => form.append('symptoms', s))
+        // Backend reads symptoms[] via form.getlist('symptoms[]')
+        val.forEach((s) => form.append('symptoms[]', s))
       } else if (key === 'image' && val instanceof File) {
         form.append('image', val)
       } else {
         form.append(key, String(val))
       }
     })
-    return api.post<DiagnoseResponse>('/diagnose', form, {
+
+    // ✅ Correct backend route: /api/diagnosis/predict
+    return api.post<DiagnoseResponse>('/diagnosis/predict', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },

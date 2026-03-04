@@ -21,6 +21,8 @@ export const useAuthStore = create<AuthState>()(
       isLoading: true,
 
       setAuth: (user, token) => {
+        // Store token under the plain 'token' key so the axios interceptor
+        // in api.ts can read it with localStorage.getItem('token')
         localStorage.setItem('token', token)
         set({ user, token, isAuthenticated: true, isLoading: false })
       },
@@ -34,11 +36,21 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'rarediag-auth',
+      // Only persist user + token; isLoading and isAuthenticated are derived on rehydrate
       partialize: (state) => ({ user: state.user, token: state.token }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.isAuthenticated = !!state.token
+          const hasToken = !!state.token
+          state.isAuthenticated = hasToken
           state.isLoading = false
+
+          // Sync the plain localStorage 'token' key so the axios interceptor
+          // always has it available, even after a page refresh
+          if (hasToken && state.token) {
+            localStorage.setItem('token', state.token)
+          } else {
+            localStorage.removeItem('token')
+          }
         }
       },
     }

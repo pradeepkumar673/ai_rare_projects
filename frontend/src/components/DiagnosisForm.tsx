@@ -24,6 +24,35 @@ const SYMPTOM_SUGGESTIONS = [
   'Tremor', 'Ataxia', 'Ophthalmoplegia', 'Angiokeratoma', 'Corneal opacity',
 ]
 
+const FAMILY_HISTORY_OPTIONS = [
+  'Gaucher disease',
+  'Fabry disease',
+  'Niemann-Pick disease',
+  'Cystic fibrosis',
+  'Huntington disease',
+  'Marfan syndrome',
+  'Wilson disease',
+  'Phenylketonuria (PKU)',
+  'Sickle cell disease',
+  'Hemophilia',
+  'Tay-Sachs disease',
+  'Unexplained neurological symptoms',
+  'Unexplained metabolic disorder',
+  'Early-onset cancer',
+  'Rare autoimmune condition',
+]
+
+const LAB_PRESETS = [
+  { label: 'WBC', unit: '×10⁹/L', placeholder: 'e.g. 3.2' },
+  { label: 'RBC', unit: '×10¹²/L', placeholder: 'e.g. 3.8' },
+  { label: 'Hemoglobin', unit: 'g/dL', placeholder: 'e.g. 10.2' },
+  { label: 'Platelets', unit: '×10⁹/L', placeholder: 'e.g. 150' },
+  { label: 'ALT', unit: 'U/L', placeholder: 'e.g. 80' },
+  { label: 'AST', unit: 'U/L', placeholder: 'e.g. 72' },
+  { label: 'Ferritin', unit: 'ng/mL', placeholder: 'e.g. 1200' },
+  { label: 'CRP', unit: 'mg/L', placeholder: 'e.g. 15' },
+]
+
 const STEPS = ['Personal Info', 'Symptoms', 'History & Labs', 'Image Upload']
 
 interface DiagnosisFormProps {
@@ -34,6 +63,9 @@ interface DiagnosisFormProps {
 export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
   const [step, setStep] = useState(0)
   const [symptomInput, setSymptomInput] = useState('')
+  const [otherFamilyHistory, setOtherFamilyHistory] = useState('')
+  const [labValues, setLabValues] = useState<Record<string, string>>({})
+  const [extraLabText, setExtraLabText] = useState('')
   const imageRef = useRef<HTMLInputElement>(null)
 
   const [form, setForm] = useState<{
@@ -44,8 +76,7 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
     symptoms: string[]
     duration: string
     severity: string
-    family_history: string
-    lab_values: string
+    family_history_checked: string[]
     image: File | null
     imagePreview: string | null
   }>({
@@ -56,8 +87,7 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
     symptoms: [],
     duration: '',
     severity: '',
-    family_history: '',
-    lab_values: '',
+    family_history_checked: [],
     image: null,
     imagePreview: null,
   })
@@ -76,6 +106,15 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
   const removeSymptom = (s: string) =>
     set('symptoms', form.symptoms.filter((x) => x !== s))
 
+  const toggleFamilyHistory = (item: string) => {
+    const current = form.family_history_checked
+    if (current.includes(item)) {
+      set('family_history_checked', current.filter((x) => x !== item))
+    } else {
+      set('family_history_checked', [...current, item])
+    }
+  }
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -86,6 +125,23 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
   const handleNext = () => setStep((s) => Math.min(s + 1, STEPS.length - 1))
   const handleBack = () => setStep((s) => Math.max(s - 1, 0))
 
+  // Build family_history string from checkboxes + freetext
+  const buildFamilyHistory = () => {
+    const parts = [...form.family_history_checked]
+    if (otherFamilyHistory.trim()) parts.push(otherFamilyHistory.trim())
+    return parts.join(', ')
+  }
+
+  // Build lab_values string from structured inputs + extra freetext
+  const buildLabValues = () => {
+    const structured = Object.entries(labValues)
+      .filter(([, v]) => v.trim())
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ')
+    const parts = [structured, extraLabText.trim()].filter(Boolean)
+    return parts.join('; ')
+  }
+
   const handleSubmit = () => {
     onSubmit({
       age: Number(form.age),
@@ -95,8 +151,8 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
       symptoms: form.symptoms,
       duration: form.duration,
       severity: form.severity,
-      family_history: form.family_history,
-      lab_values: form.lab_values || undefined,
+      family_history: buildFamilyHistory(),
+      lab_values: buildLabValues() || undefined,
       image: form.image || undefined,
     })
   }
@@ -104,8 +160,8 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
   const stepValid = [
     form.age && form.gender && form.ethnicity && form.region,
     form.symptoms.length > 0 && form.duration && form.severity,
-    true, // history & labs optional
-    true, // image optional
+    true,
+    true,
   ]
 
   return (
@@ -217,7 +273,6 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
               <p className="text-sm text-muted-foreground">Add all symptoms you're experiencing. The more detail, the better.</p>
             </div>
 
-            {/* Selected symptoms */}
             <div>
               <Label className="mb-2 block">Selected symptoms ({form.symptoms.length})</Label>
               <div className="min-h-[60px] flex flex-wrap gap-2 p-3 rounded-xl border bg-background">
@@ -235,7 +290,6 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
               </div>
             </div>
 
-            {/* Custom symptom input */}
             <div className="flex gap-2">
               <Input
                 value={symptomInput}
@@ -255,7 +309,6 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
               </Button>
             </div>
 
-            {/* Suggestions */}
             <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Common symptoms (tap to add)</Label>
               <div className="flex flex-wrap gap-1.5">
@@ -298,9 +351,9 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
           </div>
         )}
 
-        {/* Step 2: History & Labs */}
+        {/* Step 2: History & Labs — CHECKBOXES */}
         {step === 2 && (
-          <div className="space-y-6 animate-fade-in">
+          <div className="space-y-8 animate-fade-in">
             <div>
               <h2 className="text-2xl font-display font-semibold text-foreground mb-1">
                 Medical History & Labs
@@ -308,27 +361,122 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
               <p className="text-sm text-muted-foreground">Optional but significantly improves accuracy.</p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="family_history">Family history of rare diseases</Label>
-              <Textarea
-                id="family_history"
-                value={form.family_history}
-                onChange={(e) => set('family_history', e.target.value)}
-                placeholder="e.g. Father had Gaucher disease, maternal grandfather had unexplained neurological symptoms…"
-                className="min-h-[100px]"
-              />
+            {/* ── Family History Checkboxes ── */}
+            <div className="space-y-3">
+              <Label className="text-base font-semibold text-foreground">
+                Family history of rare diseases
+              </Label>
+              <p className="text-xs text-muted-foreground -mt-1">Check all that apply in your family.</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {FAMILY_HISTORY_OPTIONS.map((item) => {
+                  const checked = form.family_history_checked.includes(item)
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => toggleFamilyHistory(item)}
+                      className={cn(
+                        'flex items-center gap-3 rounded-xl border px-4 py-3 text-sm text-left transition-all',
+                        checked
+                          ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300'
+                          : 'border-border bg-background text-foreground hover:border-teal-400 hover:bg-muted/50'
+                      )}
+                    >
+                      {/* Custom checkbox */}
+                      <span
+                        className={cn(
+                          'flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-all',
+                          checked
+                            ? 'bg-teal-500 border-teal-500'
+                            : 'border-slate-400 dark:border-slate-600'
+                        )}
+                      >
+                        {checked && (
+                          <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 8" fill="none">
+                            <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </span>
+                      {item}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Other / freetext */}
+              <div className="space-y-1.5 pt-1">
+                <Label htmlFor="other-family" className="text-xs text-muted-foreground">
+                  Other — describe any other family history
+                </Label>
+                <Input
+                  id="other-family"
+                  value={otherFamilyHistory}
+                  onChange={(e) => setOtherFamilyHistory(e.target.value)}
+                  placeholder="e.g. maternal grandfather had unexplained liver failure…"
+                />
+              </div>
+
+              {/* Selected summary */}
+              {(form.family_history_checked.length > 0 || otherFamilyHistory) && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {form.family_history_checked.map((item) => (
+                    <Badge key={item} variant="teal" className="flex items-center gap-1 text-xs">
+                      {item}
+                      <button onClick={() => toggleFamilyHistory(item)} aria-label={`Remove ${item}`}>
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </Badge>
+                  ))}
+                  {otherFamilyHistory && (
+                    <Badge variant="outline" className="text-xs">{otherFamilyHistory}</Badge>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="lab_values">Recent laboratory values (optional)</Label>
-              <Textarea
-                id="lab_values"
-                value={form.lab_values}
-                onChange={(e) => set('lab_values', e.target.value)}
-                placeholder="e.g. WBC: 3.2, RBC: 3.8, Hgb: 10.2, ALT: 80, AST: 72, Ferritin: 1200…"
-                className="min-h-[100px] font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">Paste lab results in any format. Our AI will parse them.</p>
+            {/* ── Lab Values — structured inputs ── */}
+            <div className="space-y-3">
+              <Label className="text-base font-semibold text-foreground">
+                Recent laboratory values
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <p className="text-xs text-muted-foreground -mt-1">Fill in any values you have. Leave blank to skip.</p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {LAB_PRESETS.map(({ label, unit, placeholder }) => (
+                  <div key={label} className="space-y-1">
+                    <label className="text-xs font-medium text-foreground">
+                      {label}
+                      <span className="ml-1 text-muted-foreground font-normal">{unit}</span>
+                    </label>
+                    <Input
+                      type="number"
+                      step="any"
+                      value={labValues[label] ?? ''}
+                      onChange={(e) =>
+                        setLabValues((prev) => ({ ...prev, [label]: e.target.value }))
+                      }
+                      placeholder={placeholder}
+                      className="h-9 text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Other lab values freetext */}
+              <div className="space-y-1.5 pt-1">
+                <Label htmlFor="extra-labs" className="text-xs text-muted-foreground">
+                  Other lab results or notes
+                </Label>
+                <Textarea
+                  id="extra-labs"
+                  value={extraLabText}
+                  onChange={(e) => setExtraLabText(e.target.value)}
+                  placeholder="e.g. Glucocerebrosidase enzyme activity: 2.1 nmol/hr/mg (low), Chitotriosidase: elevated…"
+                  className="min-h-[72px] font-mono text-xs"
+                />
+              </div>
             </div>
           </div>
         )}
@@ -391,7 +539,7 @@ export function DiagnosisForm({ onSubmit, loading }: DiagnosisFormProps) {
           </div>
         )}
 
-        {/* Navigation buttons */}
+        {/* Navigation */}
         <div className="flex items-center justify-between mt-8 pt-6 border-t">
           <Button
             variant="outline"

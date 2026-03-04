@@ -23,7 +23,6 @@ from utils.explainability import generate_shap_plot
 from utils.report_generator import generate_pdf_report
 from utils.triage import assess_risk
 from schemas import DiagnosisInput
-#from celery_app import generate_pdf_async
 
 diagnosis_bp = Blueprint('diagnosis', __name__)
 
@@ -46,9 +45,10 @@ def get_kg() -> Optional[KnowledgeGraph]:
 # Prediction endpoint
 # -------------------------------------------------------------------
 @diagnosis_bp.route('/predict', methods=['POST'])
-#@jwt_required()
+@jwt_required()   # ← re-enabled; was commented out while get_jwt_identity() was still called
 def predict() -> Dict[str, Any]:
-    user_id = get_jwt_identity()
+    user_id = get_jwt_identity()  # safe now that @jwt_required() is active
+
     structured = get_structured_predictor()
     if structured is None:
         return jsonify({'error': 'Model not available'}), 503
@@ -95,11 +95,9 @@ def predict() -> Dict[str, Any]:
 
     image_predictor = get_image_predictor()
     if validated.image and image_predictor:
-        # Save uploaded file to temp
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             validated.image.save(tmp.name)
             with open(tmp.name, 'rb') as f:
-                img_bytes = f.read()
                 disease, conf, probs, heatmap = image_predictor.predict(f)
             # Generate heatmap overlay
             original = cv2.imread(tmp.name)
@@ -121,7 +119,7 @@ def predict() -> Dict[str, Any]:
             'overlay_b64': image_overlay_b64
         }
         image_proba_full = probs
-        image_idx_to_name = {i: disease for i, disease in image_predictor.idx_to_disease.items()}
+        image_idx_to_name = {i: d for i, d in image_predictor.idx_to_disease.items()}
 
     # Fusion
     fusion = get_fusion()
@@ -163,26 +161,26 @@ def predict() -> Dict[str, Any]:
         'user_id': ObjectId(user_id),
         'symptoms': symptoms,
         'demographics': demographics,
-        'structured_top5': structured_top5,
+        'structured_top5': [(d, float(p)) for d, p in structured_top5],
         'image_result': image_result,
-        'final_top5': final_top5,
+        'final_top5': [(d, float(p)) for d, p in final_top5],
         'risk_level': risk_level,
         'urgency': urgency,
         'agreement': agreement,
         'kg_suggestions': [d for d, _ in kg_diseases[:5]],
-        'shap_explanations': shap_top,
-        'shap_values': shap_values_full.tolist(),  # for PDF
+        'shap_explanations': [(s, float(imp)) for s, imp in shap_top],
+        'shap_values': shap_values_full.tolist(),
         'consent': validated.consent,
         'created_at': datetime.now(timezone.utc)
     }
     result = current_app.db.diagnoses.insert_one(diagnosis_record)
     diagnosis_id = str(result.inserted_id)
 
-    # Async PDF generation
-    #generate_pdf_async.delay(diagnosis_record, diagnosis_id)
-    # generate_pdf_async.delay(diagnosis_record, diagnosis_id)
-    from utils.report_generator import generate_pdf_report
-    generate_pdf_report(diagnosis_record, diagnosis_id, current_app.config['PDF_REPORT_DIR'])
+    # PDF generation (synchronous for now)
+    try:
+        generate_pdf_report(diagnosis_record, diagnosis_id, current_app.config['PDF_REPORT_DIR'])
+    except Exception as e:
+        current_app.logger.error(f"PDF generation failed: {e}")
 
     # Audit log
     current_app.db.audit_logs.insert_one({
@@ -193,24 +191,62 @@ def predict() -> Dict[str, Any]:
         'ts': datetime.now(timezone.utc)
     })
 
-    # Response
-    response = {
+    # Build response in the shape DiagnoseResponse (frontend) expects:
+    # { case_id, top_diseases[{name, probability}], confidence, risk_level,
+    #   urgency, shap_values[{symptom, importance}], kg_reasoning_snippet }
+    top_diseases = [
+        {'name': d, 'probability': float(p)}
+        for d, p in final_top5
+    ]
+    confidence = float(final_top5[0][1]) if final_top5 else 0.0
+
+    # Normalize risk_level and urgency to lowercase to match frontend types
+    risk_map = {'High': 'high', 'Medium': 'medium', 'Low': 'low'}
+    urgency_map = {
+        'Emergency': 'immediate',
+        'Immediate': 'immediate',
+        'Immediate (within 24h)': 'immediate',
+        'Immediate (rare cluster)': 'immediate',
+        'Soon (within 1 week)': 'soon',
+        'Routine (schedule appointment)': 'routine',
+    }
+    normalized_risk = risk_map.get(risk_level, risk_level.lower())
+    normalized_urgency = urgency_map.get(urgency, 'routine')
+
+    # Build KG reasoning snippet
+    kg_snippet = ''
+    if kg_diseases:
+        kg_snippet = f"Knowledge graph analysis found {len(kg_diseases)} related diseases for your symptoms. "
+        kg_snippet += f"Top matches: {', '.join(d for d, _ in kg_diseases[:3])}."
+    else:
+        kg_snippet = "No strong knowledge graph matches found. AI prediction is based on symptom patterns alone."
+
+    response: Dict[str, Any] = {
+        'case_id': diagnosis_id,
+        'top_diseases': top_diseases,
+        'confidence': confidence,
+        'risk_level': normalized_risk,
+        'urgency': normalized_urgency,
+        'shap_values': [
+            {'symptom': s, 'importance': float(imp)}
+            for s, imp in shap_top
+        ],
+        'kg_reasoning_snippet': kg_snippet,
+        'kg_suggestions': [d for d, _ in kg_diseases[:5]],
+        'agreement': agreement,
+        'specialist_review': agreement == 'low' and normalized_risk == 'high',
+        'image_result': image_result,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        # Legacy fields
         'diagnosis_id': diagnosis_id,
         'top5': [{'disease': d, 'confidence': float(c)} for d, c in final_top5],
-        'risk_level': risk_level,
-        'urgency': urgency,
-        'agreement': agreement,
-        'kg_suggestions': [d for d, _ in kg_diseases[:5]],
+        'risk_level_raw': risk_level,
+        'urgency_raw': urgency,
         'explanations': [{'symptom': s, 'importance': float(imp)} for s, imp in shap_top],
-        'image_result': image_result
     }
-    # Add specialist review flag if low agreement and high risk
-    if agreement == 'low' and risk_level == 'High':
-        response['specialist_review'] = True
-    else:
-        response['specialist_review'] = False
 
     return jsonify(response)
+
 
 # -------------------------------------------------------------------
 # Report download
@@ -224,7 +260,7 @@ def get_report(diagnosis_id: str):
         return jsonify({'error': 'Not found'}), 404
 
     user = current_app.db.users.find_one({'_id': ObjectId(user_id)})
-    if str(diagnosis['user_id']) != user_id and user['role'] != 'doctor':
+    if str(diagnosis['user_id']) != user_id and user.get('role') != 'doctor':
         return jsonify({'error': 'Unauthorized'}), 403
 
     pdf_path = os.path.join(current_app.config['PDF_REPORT_DIR'], f'diagnosis_{diagnosis_id}.pdf')
