@@ -74,7 +74,8 @@ def predict() -> Dict[str, Any]:
     if not validated.consent:
         return jsonify({'error': 'Consent must be given'}), 400
 
-    symptoms = normalize_symptoms(validated.symptoms)
+    #symptoms = normalize_symptoms(validated.symptoms)
+    symptoms = validated.symptoms
     demographics = {
         'age': validated.age,
         'gender': validated.gender,

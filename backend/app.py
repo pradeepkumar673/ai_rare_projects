@@ -80,23 +80,20 @@ def load_models():
     """Load heavy models into app context on first request."""
     global _models_loaded
     if not _models_loaded:
-        from models.structured_model import StructuredPredictor
         from models.image_model import ImagePredictor
         from models.fusion import MultimodalFusion
         from knowledge_graph.builder import KnowledgeGraph
 
+        # ── Rare Disease Knowledge Base (replaces StructuredPredictor) ──
         try:
-            app.structured_predictor = StructuredPredictor(
-                rf_path=Config.STRUCTURED_MODEL_PATH,
-                xgb_path=Config.XGB_MODEL_PATH,
-                encoder_path=Config.LABEL_ENCODER_PATH,
-                feature_names_path=Config.FEATURE_NAMES_PATH
-            )
-            logger.info("Structured model loaded")
-        except FileNotFoundError as e:
-            logger.error("Structured model missing", error=str(e))
+            from models.rare_disease_kb import RareDiseasePredictor
+            app.structured_predictor = RareDiseasePredictor()
+            logger.info("Rare disease KB loaded")
+        except Exception as e:
+            logger.error("Rare disease KB failed", error=str(e))
             app.structured_predictor = None
 
+        # ── Image model (EfficientNet-B3, HAM10000 skin lesions) ────────
         try:
             app.image_predictor = ImagePredictor(Config.IMAGE_MODEL_PATH)
             logger.info("Image model loaded")
@@ -104,8 +101,10 @@ def load_models():
             logger.error("Image model missing", error=str(e))
             app.image_predictor = None
 
+        # ── Fusion ───────────────────────────────────────────────────────
         app.fusion = MultimodalFusion()
 
+        # ── Knowledge Graph ──────────────────────────────────────────────
         try:
             app.kg = KnowledgeGraph(
                 synonym_path='knowledge_graph/symptom_synonyms.json',
@@ -114,8 +113,11 @@ def load_models():
             logger.info("Knowledge graph loaded")
         except Exception as e:
             logger.error("KG build failed, using demo", error=str(e))
-            from knowledge_graph.demo_graph import demo_graph
-            app.kg = demo_graph()   # fallback demo graph
+            try:
+                from knowledge_graph.demo_graph import demo_graph
+                app.kg = demo_graph()
+            except Exception:
+                app.kg = None
 
         _models_loaded = True
 
