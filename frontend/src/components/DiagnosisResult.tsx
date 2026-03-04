@@ -27,6 +27,13 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
   const { user } = useAuthStore()
   const navigate = useNavigate()
 
+  // Derive a gradcam_url from image_result.overlay_b64 if gradcam_url isn't directly present
+  const gradcamUrl =
+    result.gradcam_url ||
+    (result.image_result?.overlay_b64
+      ? `data:image/png;base64,${result.image_result.overlay_b64}`
+      : undefined)
+
   const startConsultation = async (type: 'video' | 'voice' | 'chat') => {
     if (!user) return
     setConsultLoading(type)
@@ -45,7 +52,6 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
   }
 
   const downloadReport = () => {
-    // Simple text export – in production swap for jsPDF layout
     const content = [
       'RAREDIAG AI DIAGNOSTIC REPORT',
       '==============================',
@@ -56,7 +62,8 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       '',
       'TOP DIAGNOSES:',
       ...result.top_diseases.map(
-        (d, i) => `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%${d.icd_code ? ` (${d.icd_code})` : ''}`
+        (d, i) =>
+          `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%${d.icd_code ? ` (${d.icd_code})` : ''}`
       ),
       '',
       'URGENCY:',
@@ -84,7 +91,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-display font-semibold text-foreground">Diagnosis Results</h2>
-          <p className="text-sm text-muted-foreground mt-1">Case ID: <span className="font-mono text-xs">{result.case_id}</span></p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Case ID: <span className="font-mono text-xs">{result.case_id}</span>
+          </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <Badge variant={riskVariant} className="text-sm px-3 py-1">
@@ -106,9 +115,21 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       </div>
 
       {/* Urgency banner */}
-      <div className={`rounded-2xl p-4 flex items-start gap-3 border ${isHighRisk ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'}`}>
-        <AlertTriangle className={`w-5 h-5 mt-0.5 shrink-0 ${isHighRisk ? 'text-red-500' : 'text-amber-500'}`} />
-        <p className={`text-sm font-medium ${isHighRisk ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
+      <div
+        className={`rounded-2xl p-4 flex items-start gap-3 border ${
+          isHighRisk
+            ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
+            : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+        }`}
+      >
+        <AlertTriangle
+          className={`w-5 h-5 mt-0.5 shrink-0 ${isHighRisk ? 'text-red-500' : 'text-amber-500'}`}
+        />
+        <p
+          className={`text-sm font-medium ${
+            isHighRisk ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'
+          }`}
+        >
           {getUrgencyLabel(result.urgency)}
         </p>
       </div>
@@ -118,7 +139,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
           <TabsTrigger value="diseases">Top Diseases</TabsTrigger>
           <TabsTrigger value="shap">Symptom Analysis</TabsTrigger>
           <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
-          {result.gradcam_url && <TabsTrigger value="imaging">Imaging</TabsTrigger>}
+          {gradcamUrl && <TabsTrigger value="imaging">Imaging</TabsTrigger>}
         </TabsList>
 
         {/* Tab: Top diseases */}
@@ -145,7 +166,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                         </div>
                       </div>
                       {disease.description && (
-                        <p className="text-sm text-muted-foreground mt-2 ml-11">{disease.description}</p>
+                        <p className="text-sm text-muted-foreground mt-2 ml-11">
+                          {disease.description}
+                        </p>
                       )}
                     </div>
                     <div className="text-right shrink-0">
@@ -155,10 +178,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                       <p className="text-xs text-muted-foreground">probability</p>
                     </div>
                   </div>
-                  <Progress
-                    value={disease.probability * 100}
-                    className="h-2"
-                  />
+                  <Progress value={disease.probability * 100} className="h-2" />
                   <a
                     href={`https://rarediseases.org/search/?q=${encodeURIComponent(disease.name)}`}
                     target="_blank"
@@ -179,33 +199,42 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
             <div className="flex items-start gap-2 mb-4">
               <Info className="w-4 h-4 text-teal-500 mt-0.5" />
               <p className="text-sm text-muted-foreground">
-                SHAP values explain which symptoms most influenced the AI's prediction. Higher values = greater impact.
+                SHAP values explain which symptoms most influenced the AI's prediction. Higher
+                values = greater impact.
               </p>
             </div>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart
-                data={result.shap_values.slice(0, 10)}
-                layout="vertical"
-                margin={{ left: 0, right: 20, top: 0, bottom: 0 }}
-              >
-                <XAxis type="number" tick={{ fontSize: 11 }} />
-                <YAxis
-                  type="category"
-                  dataKey="symptom"
-                  width={160}
-                  tick={{ fontSize: 11 }}
-                />
-                <Tooltip
-                  formatter={(v: number) => [v.toFixed(3), 'SHAP value']}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid var(--border)', fontSize: 12 }}
-                />
-                <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
-                  {result.shap_values.slice(0, 10).map((_, idx) => (
-                    <Cell key={idx} fill={SHAP_COLORS[idx % SHAP_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {result.shap_values && result.shap_values.length > 0 ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart
+                  data={result.shap_values.slice(0, 10)}
+                  layout="vertical"
+                  margin={{ left: 0, right: 20, top: 0, bottom: 0 }}
+                >
+                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <YAxis
+                    type="category"
+                    dataKey="symptom"
+                    width={160}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip
+                    formatter={(v: number) => [v.toFixed(3), 'SHAP value']}
+                    contentStyle={{
+                      borderRadius: '12px',
+                      border: '1px solid var(--border)',
+                      fontSize: 12,
+                    }}
+                  />
+                  <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
+                    {result.shap_values.slice(0, 10).map((_, idx) => (
+                      <Cell key={idx} fill={SHAP_COLORS[idx % SHAP_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-muted-foreground">No symptom analysis data available.</p>
+            )}
           </div>
         </TabsContent>
 
@@ -217,7 +246,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
             </h3>
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                {result.kg_reasoning_snippet}
+                {result.kg_reasoning_snippet || 'No reasoning data available.'}
               </p>
             </div>
             {/* Simple text-based node visualization */}
@@ -238,7 +267,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
         </TabsContent>
 
         {/* Tab: Grad-CAM */}
-        {result.gradcam_url && (
+        {gradcamUrl && (
           <TabsContent value="imaging" className="mt-4">
             <div className="rounded-2xl border bg-card p-6">
               <h3 className="text-lg font-display font-semibold text-foreground mb-2">
@@ -248,17 +277,32 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                 Areas highlighted in red indicate regions the AI focused on most during analysis.
               </p>
               <img
-                src={result.gradcam_url}
+                src={gradcamUrl}
                 alt="Grad-CAM visualization"
                 className="w-full rounded-xl"
               />
+              {result.image_result && (
+                <p className="text-sm text-muted-foreground mt-3">
+                  Image prediction:{' '}
+                  <span className="font-medium text-foreground">
+                    {result.image_result.disease}
+                  </span>{' '}
+                  ({(result.image_result.confidence * 100).toFixed(0)}% confidence)
+                </p>
+              )}
             </div>
           </TabsContent>
         )}
       </Tabs>
 
-      {/* Contact specialist – show for all, emphasize for high risk */}
-      <div className={`rounded-2xl border p-6 ${isHighRisk ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10' : ''}`}>
+      {/* Contact specialist */}
+      <div
+        className={`rounded-2xl border p-6 ${
+          isHighRisk
+            ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10'
+            : ''
+        }`}
+      >
         <h3 className="text-lg font-display font-semibold text-foreground mb-1">
           {isHighRisk ? '🚨 Speak with a Specialist Now' : 'Contact a Specialist'}
         </h3>

@@ -1,12 +1,12 @@
 import axios from 'axios'
 
+// ─── Axios instance ───────────────────────────────────────────────────────────
 const api = axios.create({
-  baseURL: '/api',
-  headers: { 'Content-Type': 'application/json' },
+  baseURL: '/',
+  timeout: 60_000,
 })
 
-// Attach JWT token to every request.
-// Read from localStorage key 'token' which is set by authStore.setAuth()
+// Attach JWT token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
@@ -15,42 +15,7 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 globally → clear token and redirect to login
-api.interceptors.response.use(
-  (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      // Only redirect if not already on an auth page
-      if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
-        window.location.href = '/login'
-      }
-    }
-    return Promise.reject(err)
-  }
-)
-
-export default api
-
-// ─── Auth ──────────────────────────────────────────────
-export interface LoginPayload {
-  email: string
-  password: string
-}
-
-export interface RegisterPayload {
-  email: string
-  password: string
-  name: string
-  role: 'user' | 'doctor'
-  specialty?: string
-  licenseNumber?: string
-}
-
-export interface AuthResponse {
-  token: string
-  user: User
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface User {
   id: string
@@ -61,99 +26,142 @@ export interface User {
   avatar?: string
 }
 
-export const authApi = {
-  login: (payload: LoginPayload) =>
-    api.post<AuthResponse>('/auth/login', payload),
-  register: (payload: RegisterPayload) =>
-    api.post<AuthResponse>('/auth/register', payload),
-  // /auth/me returns the User shape directly
-  me: () => api.get<User>('/auth/me'),
-}
-
-// ─── Diagnosis ─────────────────────────────────────────
-export interface DiagnosePayload {
-  age: number
-  gender: string
-  ethnicity: string
-  region: string
-  symptoms: string[]
-  duration: string
-  severity: string
-  family_history: string
-  lab_values?: string
-  image?: File
-}
-
-export interface DiseaseResult {
+export interface Disease {
   name: string
   probability: number
   icd_code?: string
   description?: string
 }
 
+export interface ShapValue {
+  symptom: string
+  importance: number
+}
+
 export interface DiagnoseResponse {
   case_id: string
-  top_diseases: DiseaseResult[]
+  top_diseases: Disease[]
   confidence: number
-  risk_level: 'low' | 'medium' | 'high'
-  urgency: 'routine' | 'soon' | 'immediate'
-  shap_values: { symptom: string; importance: number }[]
-  gradcam_url?: string
+  risk_level: 'high' | 'medium' | 'low'
+  urgency: 'immediate' | 'soon' | 'routine'
+  shap_values: ShapValue[]
   kg_reasoning_snippet: string
-  created_at: string
+  kg_suggestions?: string[]
+  agreement?: string
+  specialist_review?: boolean
+  gradcam_url?: string
+  image_result?: {
+    disease: string
+    confidence: number
+    overlay_b64?: string
+  } | null
+  created_at?: string
+  // legacy fields
+  diagnosis_id?: string
 }
 
-export const diagnosisApi = {
-  diagnose: (payload: DiagnosePayload) => {
-    const form = new FormData()
-
-    // Append consent=true (backend requires it)
-    form.append('consent', 'true')
-
-    Object.entries(payload).forEach(([key, val]) => {
-      if (val === undefined || val === null) return
-      if (key === 'symptoms' && Array.isArray(val)) {
-        // Backend reads symptoms[] via form.getlist('symptoms[]')
-        val.forEach((s) => form.append('symptoms[]', s))
-      } else if (key === 'image' && val instanceof File) {
-        form.append('image', val)
-      } else {
-        form.append(key, String(val))
-      }
-    })
-
-    // ✅ Correct backend route: /api/diagnosis/predict
-    return api.post<DiagnoseResponse>('/diagnosis/predict', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-  },
-}
-
-// ─── Consultations ─────────────────────────────────────
-export interface ConsultationRequest {
-  patient_id: string
-  case_id: string
-  type: 'video' | 'voice' | 'chat'
+export interface DiagnosePayload {
+  symptoms: string[]
+  age?: number
+  gender?: string
+  ethnicity?: string
+  region?: string
+  duration?: string
+  severity?: string
+  family_history?: string
+  lab_values?: string
+  image?: File
 }
 
 export interface Consultation {
   id: string
-  patient_id: string
-  case_id: string
-  type: 'video' | 'voice' | 'chat'
-  status: 'pending' | 'accepted' | 'in_progress' | 'completed'
-  risk_level?: string
+  patient_id?: string
   patient_name?: string
+  case_id?: string
+  type: 'video' | 'voice' | 'chat'
+  status: 'pending' | 'accepted' | 'rejected' | 'completed'
+  risk_level: 'high' | 'medium' | 'low'
   main_symptoms?: string[]
   top_diagnosis?: string
   image_thumbnail?: string
   created_at: string
+  scheduled_time?: string
 }
 
-export const consultationApi = {
-  request: (payload: ConsultationRequest) =>
-    api.post<{ consultation_id: string }>('/consultations/request', payload),
-  queue: () => api.get<Consultation[]>('/consultations/queue'),
-  accept: (consultation_id: string) =>
-    api.post('/consultations/accept', { consultation_id }),
+export interface ConsultationRequestPayload {
+  patient_id: string
+  case_id: string
+  type: 'video' | 'voice' | 'chat'
 }
+
+// ─── Auth API ─────────────────────────────────────────────────────────────────
+
+export const authApi = {
+  register: (data: {
+    email: string
+    password: string
+    name: string
+    role: 'user' | 'doctor'
+    specialty?: string
+    licenseNumber?: string
+  }) => api.post<{ token: string; user: User }>('/api/auth/register', data),
+
+  login: (data: { email: string; password: string }) =>
+    api.post<{ token: string; user: User }>('/api/auth/login', data),
+
+  me: () => api.get<User>('/api/auth/me'),
+
+  refresh: () => api.post<{ token: string }>('/api/auth/refresh'),
+}
+
+// ─── Diagnosis API ────────────────────────────────────────────────────────────
+
+export const diagnosisApi = {
+  diagnose: async (payload: DiagnosePayload) => {
+    const formData = new FormData()
+
+    // Append each symptom under the key 'symptoms[]' (Flask reads this with getlist)
+    payload.symptoms.forEach((s) => formData.append('symptoms[]', s))
+
+    // Always send consent = true (user reached submit)
+    formData.append('consent', 'true')
+
+    if (payload.age !== undefined && payload.age !== null) {
+      formData.append('age', String(payload.age))
+    }
+    if (payload.gender) formData.append('gender', payload.gender)
+    if (payload.ethnicity) formData.append('ethnicity', payload.ethnicity)
+    if (payload.region) formData.append('region', payload.region)
+    if (payload.duration) formData.append('duration', payload.duration)
+    if (payload.severity) formData.append('severity', payload.severity)
+    if (payload.family_history) formData.append('family_history', payload.family_history)
+    if (payload.lab_values) formData.append('lab_values', payload.lab_values)
+    if (payload.image) formData.append('image', payload.image)
+
+    return api.post<DiagnoseResponse>('/api/diagnosis/predict', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+
+  getReport: (diagnosisId: string) =>
+    api.get(`/api/diagnosis/report/${diagnosisId}`, { responseType: 'blob' }),
+}
+
+// ─── Consultation API ─────────────────────────────────────────────────────────
+
+export const consultationApi = {
+  request: (data: ConsultationRequestPayload) =>
+    api.post<{ consultation_id: string }>('/api/consultations/request', data),
+
+  queue: () => api.get<Consultation[]>('/api/consultations/queue'),
+
+  accept: (id: string, scheduledTime?: string) =>
+    api.post(`/api/doctor/case/${id}/accept`, { scheduled_time: scheduledTime }),
+
+  reject: (id: string, reason?: string) =>
+    api.post(`/api/doctor/case/${id}/reject`, { reason }),
+
+  get: (id: string) => api.get<Consultation>(`/api/consultations/${id}`),
+}
+
+export default api
