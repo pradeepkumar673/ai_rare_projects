@@ -1,10 +1,9 @@
 """
 Pydantic schemas for request validation.
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List
 from werkzeug.datastructures import FileStorage
-import re
 
 class DiagnosisInput(BaseModel):
     symptoms: List[str] = Field(default_factory=list)
@@ -14,6 +13,9 @@ class DiagnosisInput(BaseModel):
     region: Optional[str] = None
     consent: bool = False
     image: Optional[FileStorage] = None
+
+    # Allow arbitrary types (FileStorage) in the model
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @field_validator('age')
     def validate_age(cls, v: Optional[int]) -> Optional[int]:

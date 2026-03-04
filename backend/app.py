@@ -1,7 +1,7 @@
 """
 Main Flask application for Rare Disease Diagnostic Engine.
 """
-from flask import Flask, request
+from flask import Flask, request, g
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
@@ -71,44 +71,53 @@ app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
 os.makedirs(app.config['PDF_REPORT_DIR'], exist_ok=True)
 
 # -------------------------------------------------------------------
-# Model loading (done once before first request)
+# Model loading (lazy, on first request)
 # -------------------------------------------------------------------
-@app.before_first_request
+_models_loaded = False
+
+@app.before_request
 def load_models():
-    """Load heavy models into app context."""
-    from models.structured_model import StructuredPredictor
-    from models.image_model import ImagePredictor
-    from models.fusion import MultimodalFusion
-    from knowledge_graph.builder import KnowledgeGraph
+    """Load heavy models into app context on first request."""
+    global _models_loaded
+    if not _models_loaded:
+        from models.structured_model import StructuredPredictor
+        from models.image_model import ImagePredictor
+        from models.fusion import MultimodalFusion
+        from knowledge_graph.builder import KnowledgeGraph
 
-    try:
-        app.structured_predictor = StructuredPredictor(
-            rf_path=Config.STRUCTURED_MODEL_PATH,
-            xgb_path=Config.XGB_MODEL_PATH,
-            encoder_path=Config.LABEL_ENCODER_PATH,
-            feature_names_path=Config.FEATURE_NAMES_PATH
-        )
-    except FileNotFoundError as e:
-        logger.error("Structured model missing", error=str(e))
-        app.structured_predictor = None
+        try:
+            app.structured_predictor = StructuredPredictor(
+                rf_path=Config.STRUCTURED_MODEL_PATH,
+                xgb_path=Config.XGB_MODEL_PATH,
+                encoder_path=Config.LABEL_ENCODER_PATH,
+                feature_names_path=Config.FEATURE_NAMES_PATH
+            )
+            logger.info("Structured model loaded")
+        except FileNotFoundError as e:
+            logger.error("Structured model missing", error=str(e))
+            app.structured_predictor = None
 
-    try:
-        app.image_predictor = ImagePredictor(Config.IMAGE_MODEL_PATH)
-    except Exception as e:
-        logger.error("Image model missing", error=str(e))
-        app.image_predictor = None
+        try:
+            app.image_predictor = ImagePredictor(Config.IMAGE_MODEL_PATH)
+            logger.info("Image model loaded")
+        except Exception as e:
+            logger.error("Image model missing", error=str(e))
+            app.image_predictor = None
 
-    app.fusion = MultimodalFusion()
+        app.fusion = MultimodalFusion()
 
-    try:
-        app.kg = KnowledgeGraph(
-            synonym_path='knowledge_graph/symptom_synonyms.json',
-            cache_path='kg_cache.pkl'
-        )
-    except Exception as e:
-        logger.error("KG build failed, using demo", error=str(e))
-        from knowledge_graph.demo_graph import demo_graph
-        app.kg = demo_graph()   # fallback demo graph
+        try:
+            app.kg = KnowledgeGraph(
+                synonym_path='knowledge_graph/symptom_synonyms.json',
+                cache_path='kg_cache.pkl'
+            )
+            logger.info("Knowledge graph loaded")
+        except Exception as e:
+            logger.error("KG build failed, using demo", error=str(e))
+            from knowledge_graph.demo_graph import demo_graph
+            app.kg = demo_graph()   # fallback demo graph
+
+        _models_loaded = True
 
 # -------------------------------------------------------------------
 # Request logging

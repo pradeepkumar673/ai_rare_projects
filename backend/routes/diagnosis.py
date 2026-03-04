@@ -23,7 +23,7 @@ from utils.explainability import generate_shap_plot
 from utils.report_generator import generate_pdf_report
 from utils.triage import assess_risk
 from schemas import DiagnosisInput
-from celery_app import generate_pdf_async
+#from celery_app import generate_pdf_async
 
 diagnosis_bp = Blueprint('diagnosis', __name__)
 
@@ -179,7 +179,10 @@ def predict() -> Dict[str, Any]:
     diagnosis_id = str(result.inserted_id)
 
     # Async PDF generation
-    generate_pdf_async.delay(diagnosis_record, diagnosis_id)
+    #generate_pdf_async.delay(diagnosis_record, diagnosis_id)
+    # generate_pdf_async.delay(diagnosis_record, diagnosis_id)
+    from utils.report_generator import generate_pdf_report
+    generate_pdf_report(diagnosis_record, diagnosis_id, current_app.config['PDF_REPORT_DIR'])
 
     # Audit log
     current_app.db.audit_logs.insert_one({

@@ -26,7 +26,8 @@ class Config:
 
     # Rate limiting
     RATELIMIT_DEFAULT: str = "200 per day, 10 per hour"
-    RATELIMIT_STORAGE_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    """RATELIMIT_STORAGE_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379/0')"""
+    RATELIMIT_STORAGE_URL = "memory://"
 
     # Async
     REDIS_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379/0')

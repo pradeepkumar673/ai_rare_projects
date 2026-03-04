@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+*.log
+
+# Virtual environment
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Flask
+instance/
+.webassets-cache
+.env
+.flaskenv
+
+# MongoDB data (if you have local dumps)
+dump/
+
+# Redis dump
+dump.rdb
+
+# PDF reports
+reports/
+*.pdf
+!reports/.gitkeep   # if you want to keep the folder empty but tracked
+
+# Model files (if too large for git)
+saved_models/
+*.pkl
+*.pth
+!saved_models/.gitkeep   # if you want to keep the folder empty but tracked
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# OS
+.DS_Store
+Thumbs.db
