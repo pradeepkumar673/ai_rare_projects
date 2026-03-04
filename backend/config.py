@@ -24,9 +24,9 @@ class Config:
     # CORS
     CORS_ORIGINS: List[str] = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
 
-    # Rate limiting
-    RATELIMIT_DEFAULT: str = "200 per day, 10 per hour"
-    """RATELIMIT_STORAGE_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379/0')"""
+    # Rate limiting (disabled for development)
+    RATELIMIT_ENABLED = False
+    RATELIMIT_DEFAULT = "10000 per day, 1000 per hour"  # fallback if enabled
     RATELIMIT_STORAGE_URL = "memory://"
 
     # Async

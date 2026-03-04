@@ -26,16 +26,30 @@ export function Register() {
   const { setAuth } = useAuthStore()
   const navigate = useNavigate()
 
+  // Password validation matching backend rules
+  const validatePassword = (pw: string): string | null => {
+    if (pw.length < 8) return 'Password must be at least 8 characters.'
+    if (!/[A-Z]/.test(pw)) return 'Password must contain at least one uppercase letter.'
+    if (!/\d/.test(pw)) return 'Password must contain at least one digit.'
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pw)) return 'Password must contain at least one symbol.'
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Basic validations
     if (password !== confirm) {
       setError("Passwords don't match.")
       return
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+    
+    const passwordError = validatePassword(password)
+    if (passwordError) {
+      setError(passwordError)
       return
     }
+    
     setError('')
     setLoading(true)
 
@@ -153,15 +167,15 @@ export function Register() {
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min. 8 characters"
+                placeholder="Min. 8 characters, with uppercase, digit, and symbol"
                 required
                 className="pr-10"
               />
               <button
                 type="button"
                 onClick={() => setShowPw((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                aria-label="Toggle password"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Toggle password visibility"
               >
                 {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
