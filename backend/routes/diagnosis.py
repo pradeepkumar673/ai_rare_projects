@@ -46,7 +46,7 @@ def get_kg() -> Optional[KnowledgeGraph]:
 # Prediction endpoint
 # -------------------------------------------------------------------
 @diagnosis_bp.route('/predict', methods=['POST'])
-@jwt_required()
+#@jwt_required()
 def predict() -> Dict[str, Any]:
     user_id = get_jwt_identity()
     structured = get_structured_predictor()

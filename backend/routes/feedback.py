@@ -10,7 +10,7 @@ from typing import Dict, Any
 feedback_bp = Blueprint('feedback', __name__)
 
 @feedback_bp.route('/', methods=['POST'])
-@jwt_required()
+#@jwt_required()
 def submit_feedback() -> Dict[str, Any]:
     user_id = get_jwt_identity()
     data = request.json or {}

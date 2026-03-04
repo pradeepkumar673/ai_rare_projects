@@ -122,7 +122,7 @@ def accept_case(case_id: str) -> Dict[str, Any]:
     return jsonify({'message': 'Consultation scheduled', 'consultation_id': str(result.inserted_id)})
 
 @doctor_bp.route('/case/<case_id>/reject', methods=['POST'])
-@jwt_required()
+#@jwt_required()
 @doctor_required
 def reject_case(case_id: str) -> Dict[str, Any]:
     data = request.json or {}
