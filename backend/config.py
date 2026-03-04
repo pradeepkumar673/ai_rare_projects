@@ -16,7 +16,7 @@ class Config:
     # Model paths
     MODEL_PATH: str = os.getenv('MODEL_PATH', './saved_models')
     STRUCTURED_MODEL_PATH: str = os.path.join(MODEL_PATH, 'rf_model.pkl')
-    XGB_MODEL_PATH: str = os.path.join(MODEL_PATH, 'xgb_model.pkl')
+    XGB_MODEL_PATH: str = os.path.join(MODEL_PATH, 'xgb_model.json')
     LABEL_ENCODER_PATH: str = os.path.join(MODEL_PATH, 'label_encoder.pkl')
     FEATURE_NAMES_PATH: str = os.path.join(MODEL_PATH, 'feature_names.pkl')
     IMAGE_MODEL_PATH: str = os.path.join(MODEL_PATH, 'efficientnet_b3_ham10000.pth')

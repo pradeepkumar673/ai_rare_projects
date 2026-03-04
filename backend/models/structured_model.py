@@ -98,10 +98,12 @@ class StructuredPredictor:
     """
     def __init__(self, rf_path: str, xgb_path: str, encoder_path: str, feature_names_path: str):
         self.rf = joblib.load(rf_path)
-        self.xgb = joblib.load(xgb_path)
+        from xgboost import XGBClassifier
+        self.xgb = XGBClassifier()
+        self.xgb.load_model(xgb_path)
         self.le = joblib.load(encoder_path)
         self.feature_names: List[str] = joblib.load(feature_names_path)
-        self.xgb = _patch_xgb_classifier(self.xgb)
+    # removed _patch_xgb_classifier — not needed for JSON models
 
     def _preprocess(self, symptoms_list: List[str], demographics: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         data = {name: 0 for name in self.feature_names}
@@ -111,11 +113,9 @@ class StructuredPredictor:
         df = pd.DataFrame([data])
         return df[self.feature_names]
 
-    def predict_proba(self, symptoms_list: List[str], demographics: Optional[Dict[str, Any]] = None) -> np.ndarray:
+    def predict_proba(self, symptoms_list, demographics=None):
         X = self._preprocess(symptoms_list, demographics)
-        rf_proba = self.rf.predict_proba(X)[0]
-        xgb_proba = self.xgb.predict_proba(X)[0]
-        return (rf_proba + xgb_proba) / 2
+        return self.rf.predict_proba(X)[0]
 
     def predict_top5(self, symptoms_list: List[str], demographics: Optional[Dict[str, Any]] = None) -> List[Tuple[str, float]]:
         proba = self.predict_proba(symptoms_list, demographics)
