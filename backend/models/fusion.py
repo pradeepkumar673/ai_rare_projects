@@ -1,9 +1,13 @@
+"""
+Multimodal fusion of structured and image predictions.
+"""
 import numpy as np
+from typing import List, Dict, Tuple
 
 class MultimodalFusion:
-    # Map HAM10000 disease names to our structured disease names (choose the closest match)
-    # If no match, map to 'unknown_skin' (which we assume exists in the structured set).
-    IMAGE_TO_STRUCTURED_MAP = {
+    # Map HAM10000 disease names to our structured disease names.
+    # If no match, map to 'unknown_skin' (should exist in structured set).
+    IMAGE_TO_STRUCTURED_MAP: Dict[str, str] = {
         'Melanoma': 'melanoma',
         'Nevus': 'nevus',
         'Basal Cell Carcinoma': 'basal cell carcinoma',
@@ -12,24 +16,27 @@ class MultimodalFusion:
         'Dermatofibroma': 'dermatofibroma',
         'Vascular Lesion': 'vascular lesion'
     }
-    # We'll assume 'unknown_skin' is added to the structured disease list.
 
-    def __init__(self, structured_weight=0.7, image_weight=0.3, agreement_threshold=0.8):
+    def __init__(self, structured_weight: float = 0.7, image_weight: float = 0.3) -> None:
         self.structured_weight = structured_weight
         self.image_weight = image_weight
-        self.agreement_threshold = agreement_threshold
 
-    def fuse(self, structured_proba, image_proba, structured_diseases, image_idx_to_name):
+    def fuse(self,
+             structured_proba: np.ndarray,
+             image_proba: np.ndarray,
+             structured_diseases: List[str],
+             image_idx_to_name: Dict[int, str]) -> Tuple[np.ndarray, str]:
         """
-        structured_proba: array (N,) of probabilities from structured model.
-        image_proba: array (7,) of probabilities from image model.
-        structured_diseases: list of N disease names in same order as structured_proba.
-        image_idx_to_name: dict mapping image class index (0-6) to disease name.
+        Args:
+            structured_proba: array (N,) of probabilities from structured model.
+            image_proba: array (7,) of probabilities from image model.
+            structured_diseases: list of N disease names in same order.
+            image_idx_to_name: dict mapping image class index to disease name.
         Returns:
             fused_proba: array (N,) fused probabilities.
-            agreement: 'high' or 'low'.
+            agreement: 'high' if top predictions match after mapping, else 'low'.
         """
-        # Build mapping from structured disease index to image probability
+        # Build mapped image probability vector over structured diseases
         mapped_image_proba = np.zeros_like(structured_proba)
         for img_idx, img_name in image_idx_to_name.items():
             mapped_name = self.IMAGE_TO_STRUCTURED_MAP.get(img_name, 'unknown_skin')

@@ -1,13 +1,17 @@
+"""
+Authentication endpoints with JWT.
+"""
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 import re
+from typing import Dict, Any
 
 auth_bp = Blueprint('auth', __name__)
 
-def validate_password(password):
+def validate_password(password: str) -> bool:
     """At least 8 chars, one uppercase, one digit, one symbol."""
     if len(password) < 8:
         return False
@@ -20,14 +24,13 @@ def validate_password(password):
     return True
 
 @auth_bp.route('/register', methods=['POST'])
-def register():
-    data = request.json
+def register() -> Dict[str, Any]:
+    data = request.json or {}
     email = data.get('email')
     password = data.get('password')
     role = data.get('role', 'patient')
     name = data.get('name')
 
-    # Basic validation
     if not email or not password:
         return jsonify({'error': 'Email and password required'}), 400
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
@@ -36,7 +39,6 @@ def register():
         return jsonify({'error': 'Password must be at least 8 characters with one uppercase, one digit, and one symbol'}), 400
 
     db = current_app.db
-    # Ensure unique index on email
     db.users.create_index('email', unique=True)
 
     if db.users.find_one({'email': email}):
@@ -51,7 +53,6 @@ def register():
         'created_at': datetime.now(timezone.utc)
     }).inserted_id
 
-    # Audit log
     db.audit_logs.insert_one({
         'action': 'user_register',
         'user_id': user_id,
@@ -62,8 +63,8 @@ def register():
     return jsonify({'message': 'User created', 'user_id': str(user_id)}), 201
 
 @auth_bp.route('/login', methods=['POST'])
-def login():
-    data = request.json
+def login() -> Dict[str, Any]:
+    data = request.json or {}
     email = data.get('email')
     password = data.get('password')
 
@@ -74,7 +75,6 @@ def login():
     access_token = create_access_token(identity=str(user['_id']), additional_claims={'role': user['role']})
     refresh_token = create_refresh_token(identity=str(user['_id']))
 
-    # Audit log
     current_app.db.audit_logs.insert_one({
         'action': 'user_login',
         'user_id': user['_id'],
@@ -91,14 +91,14 @@ def login():
 
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)
-def refresh():
+def refresh() -> Dict[str, Any]:
     identity = get_jwt_identity()
     new_access = create_access_token(identity=identity)
     return jsonify({'access_token': new_access})
 
 @auth_bp.route('/me', methods=['GET'])
 @jwt_required()
-def me():
+def me() -> Dict[str, Any]:
     user_id = get_jwt_identity()
     user = current_app.db.users.find_one({'_id': ObjectId(user_id)}, {'password': 0})
     user['_id'] = str(user['_id'])

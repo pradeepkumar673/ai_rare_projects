@@ -1,9 +1,12 @@
+"""
+PDF report generation with SHAP and heatmap embedding.
+"""
 import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
-from reportlab.platypus import Table, TableStyle, Image
+from reportlab.platypus import Table, TableStyle
 import qrcode
 import io
 from datetime import datetime
@@ -12,10 +15,14 @@ import tempfile
 from PIL import Image as PILImage
 import cv2
 import numpy as np
+from typing import Dict, Any
 
 from utils.explainability import generate_shap_plot
 
-def generate_pdf_report(diagnosis_record, diagnosis_id, output_dir):
+def generate_pdf_report(diagnosis_record: Dict[str, Any], diagnosis_id: str, output_dir: str) -> str:
+    """
+    Generate an A4 PDF report with all diagnostic information.
+    """
     os.makedirs(output_dir, exist_ok=True)
     filename = os.path.join(output_dir, f'diagnosis_{diagnosis_id}.pdf')
     c = canvas.Canvas(filename, pagesize=A4)
@@ -80,17 +87,27 @@ def generate_pdf_report(diagnosis_record, diagnosis_id, output_dir):
     c.drawString(50, y, f"Urgency: {diagnosis_record['urgency']}")
     y -= 30
 
-    # SHAP explanation (if available)
-    if diagnosis_record.get('shap_explanations'):
-        shap_img = generate_shap_plot(...)  # simplified; you need to store shap values
-        # For simplicity, we skip actual SHAP image here
+    # SHAP explanation
+    if diagnosis_record.get('shap_values') and diagnosis_record.get('shap_explanations'):
+        shap_img_b64 = generate_shap_plot(
+            np.array(diagnosis_record['shap_values']),
+            [s for s, _ in diagnosis_record['shap_explanations']],  # feature names
+            [d for d, _ in diagnosis_record['final_top5']],  # class names (just for title)
+            idx=0
+        )
+        shap_img = base64.b64decode(shap_img_b64)
+        shap_io = io.BytesIO(shap_img)
+        c.drawImage(ImageReader(shap_io), 50, y-150, width=400, height=150)
+        y -= 160
 
-    # Image result with heatmap overlay
-    if diagnosis_record.get('image_result'):
-        heatmap = np.array(diagnosis_record['image_result']['heatmap'])
-        # Assume we have original image saved temporarily; for now just text
-        c.drawString(50, y, "Image Analysis: " + diagnosis_record['image_result']['disease'])
-        y -= 15
+    # Image result with heatmap
+    if diagnosis_record.get('image_result') and diagnosis_record['image_result'].get('overlay_b64'):
+        overlay_b64 = diagnosis_record['image_result']['overlay_b64']
+        overlay_img = base64.b64decode(overlay_b64)
+        overlay_io = io.BytesIO(overlay_img)
+        c.drawImage(ImageReader(overlay_io), 50, y-200, width=200, height=200)
+        c.drawString(270, y-10, f"Image prediction: {diagnosis_record['image_result']['disease']} ({diagnosis_record['image_result']['confidence']:.2%})")
+        y -= 220
 
     # QR code
     qr = qrcode.QRCode(version=1, box_size=3, border=2)

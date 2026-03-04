@@ -1,8 +1,12 @@
+"""
+Doctor endpoints for case management.
+"""
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from bson.objectid import ObjectId
 from datetime import datetime, timezone
 from functools import wraps
+from typing import Dict, Any, List
 
 doctor_bp = Blueprint('doctor', __name__)
 
@@ -19,12 +23,12 @@ def doctor_required(f):
 @doctor_bp.route('/cases', methods=['GET'])
 @jwt_required()
 @doctor_required
-def get_cases():
+def get_cases() -> Dict[str, Any]:
     page = int(request.args.get('page', 1))
     limit = int(request.args.get('limit', 20))
     skip = (page - 1) * limit
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {'$sort': {'risk_level': -1, 'created_at': -1}},
         {'$skip': skip},
         {'$limit': limit},
@@ -43,7 +47,6 @@ def get_cases():
         case['_id'] = str(case['_id'])
         case['user_id'] = str(case['user_id'])
 
-    # Audit log
     current_app.db.audit_logs.insert_one({
         'action': 'doctor_list_cases',
         'user_id': ObjectId(get_jwt_identity()),
@@ -56,7 +59,7 @@ def get_cases():
 @doctor_bp.route('/case/<case_id>', methods=['GET'])
 @jwt_required()
 @doctor_required
-def get_case(case_id):
+def get_case(case_id: str) -> Dict[str, Any]:
     case = current_app.db.diagnoses.find_one({'_id': ObjectId(case_id)})
     if not case:
         return jsonify({'error': 'Case not found'}), 404
@@ -66,7 +69,6 @@ def get_case(case_id):
     patient['_id'] = str(patient['_id'])
     case['patient'] = patient
 
-    # Audit log
     current_app.db.audit_logs.insert_one({
         'action': 'doctor_view_case',
         'user_id': ObjectId(get_jwt_identity()),
@@ -80,10 +82,10 @@ def get_case(case_id):
 @doctor_bp.route('/case/<case_id>/accept', methods=['POST'])
 @jwt_required()
 @doctor_required
-def accept_case(case_id):
-    data = request.json
+def accept_case(case_id: str) -> Dict[str, Any]:
+    data = request.json or {}
     doctor_id = get_jwt_identity()
-    scheduled_time = data.get('scheduled_time')  # ISO string
+    scheduled_time = data.get('scheduled_time')
 
     consultation = {
         'case_id': ObjectId(case_id),
@@ -98,7 +100,16 @@ def accept_case(case_id):
         {'$set': {'consultation_id': result.inserted_id}}
     )
 
-    # Audit log
+    # If case is high risk, escalate urgency in notification
+    case = current_app.db.diagnoses.find_one({'_id': ObjectId(case_id)})
+    if case and case.get('risk_level') == 'High':
+        urgency_msg = " (urgent)"
+    else:
+        urgency_msg = ""
+
+    from celery_app import notify_user_task
+    notify_user_task.delay(str(case['user_id']), case_id, f"accepted{urgency_msg}")
+
     current_app.db.audit_logs.insert_one({
         'action': 'doctor_accept_case',
         'user_id': ObjectId(doctor_id),
@@ -108,17 +119,13 @@ def accept_case(case_id):
         'ts': datetime.now(timezone.utc)
     })
 
-    # Notify patient (async)
-    from celery_app import notify_user_task
-    notify_user_task.delay(str(case_id), 'accepted')
-
     return jsonify({'message': 'Consultation scheduled', 'consultation_id': str(result.inserted_id)})
 
 @doctor_bp.route('/case/<case_id>/reject', methods=['POST'])
 @jwt_required()
 @doctor_required
-def reject_case(case_id):
-    data = request.json
+def reject_case(case_id: str) -> Dict[str, Any]:
+    data = request.json or {}
     doctor_id = get_jwt_identity()
     reason = data.get('reason', '')
 
@@ -131,7 +138,10 @@ def reject_case(case_id):
     }
     result = current_app.db.consultations.insert_one(consultation)
 
-    # Audit log
+    case = current_app.db.diagnoses.find_one({'_id': ObjectId(case_id)})
+    from celery_app import notify_user_task
+    notify_user_task.delay(str(case['user_id']), case_id, "rejected")
+
     current_app.db.audit_logs.insert_one({
         'action': 'doctor_reject_case',
         'user_id': ObjectId(doctor_id),
