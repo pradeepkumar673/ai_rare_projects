@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Activity, CheckCircle, XCircle, AlertTriangle, User, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { PreScreenAnswersCard } from '@/components/PreScreenAnswersCard'
 import {
   Dialog,
   DialogContent,
@@ -202,7 +203,15 @@ function CaseCard({
               <p className="font-semibold text-foreground truncate">
                 {consult.patient_name ?? 'Anonymous Patient'}
               </p>
-              <Badge variant={riskVariant} className="shrink-0">{consult.risk_level}</Badge>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* ── Pre-screen flag count badge ── */}
+                {consult.pre_screen_flags && consult.pre_screen_flags.length > 0 && (
+                  <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 px-2 py-0.5 rounded-full font-medium">
+                    {consult.pre_screen_flags.length} flag{consult.pre_screen_flags.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+                <Badge variant={riskVariant}>{consult.risk_level}</Badge>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               {consult.type?.toUpperCase()} · {formatDate(consult.created_at)}
@@ -321,6 +330,14 @@ function CaseDetail({
           <h4 className="text-sm font-semibold text-foreground mb-2">Medical Image</h4>
           <img src={consult.image_thumbnail} alt="Patient medical image" className="rounded-xl w-full" />
         </div>
+      )}
+
+      {/* ── Pre-screen bot answers ── */}
+      {consult.pre_screen_answers && (
+        <PreScreenAnswersCard
+          answers={consult.pre_screen_answers}
+          patientName={consult.patient_name ?? undefined}
+        />
       )}
 
       {/* Urgency indicator */}

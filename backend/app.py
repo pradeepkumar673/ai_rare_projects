@@ -16,6 +16,7 @@ from routes.auth import auth_bp
 from routes.diagnosis import diagnosis_bp
 from routes.doctor import doctor_bp
 from routes.feedback import feedback_bp
+from routes.prescreen import prescreen_bp, setup_prescreen_indexes  # ← moved here
 
 # -------------------------------------------------------------------
 # App initialization
@@ -58,14 +59,16 @@ db.users.create_index('email', unique=True)
 db.audit_logs.create_index('ts')
 db.diagnoses.create_index('user_id')
 db.diagnoses.create_index('risk_level')
+setup_prescreen_indexes(db)  # ← now works because import is above
 
 # -------------------------------------------------------------------
 # Blueprints
 # -------------------------------------------------------------------
-app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(auth_bp,      url_prefix='/api/auth')
 app.register_blueprint(diagnosis_bp, url_prefix='/api/diagnosis')
-app.register_blueprint(doctor_bp, url_prefix='/api/doctor')
-app.register_blueprint(feedback_bp, url_prefix='/api/feedback')
+app.register_blueprint(doctor_bp,    url_prefix='/api/doctor')
+app.register_blueprint(feedback_bp,  url_prefix='/api/feedback')
+app.register_blueprint(prescreen_bp, url_prefix='/api/prescreen')  # ← added here
 
 # Ensure PDF report directory exists
 os.makedirs(app.config['PDF_REPORT_DIR'], exist_ok=True)

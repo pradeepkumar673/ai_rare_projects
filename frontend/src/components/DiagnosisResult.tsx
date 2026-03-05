@@ -15,9 +15,9 @@ import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { GlowingEffect } from '@/components/ui/glowing-effect'
 import { FeedbackWidget } from '@/components/ui/feedback-widget'
-import type { DiagnoseResponse } from '@/lib/api'
-import { consultationApi } from '@/lib/api'
+import { type DiagnoseResponse, consultationApi, submitPreScreen } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
+import { PreScreenBot, type PreScreenAnswers } from './PreScreenBot'
 
 interface DiagnosisResultProps {
   result: DiagnoseResponse
@@ -58,20 +58,24 @@ function parseReasoning(snippet: string): { label: string; text: string; icon: s
 function ReasoningIcon({ icon }: { icon: string }) {
   const cls = 'w-4 h-4 shrink-0 mt-0.5'
   switch (icon) {
-    case 'brain': return <Brain className={`${cls} text-violet-500`} />
-    case 'flask': return <FlaskConical className={`${cls} text-teal-500`} />
-    case 'network': return <Network className={`${cls} text-blue-500`} />
-    case 'check': return <CheckCircle2 className={`${cls} text-emerald-500`} />
-    case 'x': return <XCircle className={`${cls} text-red-500`} />
-    default: return <Info className={`${cls} text-slate-400`} />
+    case 'brain':   return <Brain        className={`${cls} text-violet-500`} />
+    case 'flask':   return <FlaskConical className={`${cls} text-teal-500`} />
+    case 'network': return <Network      className={`${cls} text-blue-500`} />
+    case 'check':   return <CheckCircle2 className={`${cls} text-emerald-500`} />
+    case 'x':       return <XCircle      className={`${cls} text-red-500`} />
+    default:        return <Info         className={`${cls} text-slate-400`} />
   }
 }
 
 export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
+  // ── FIX 1: all useState calls must be INSIDE the component ──
   const [consultLoading, setConsultLoading] = useState<string | null>(null)
+  const [showPreScreen, setShowPreScreen]   = useState(false)
+  const [pendingConsultType, setPendingConsultType] = useState<'video' | 'voice' | 'chat'>('chat')
+
   const { user } = useAuthStore()
-  const navigate = useNavigate()
-  const { t } = useTranslation()
+  const navigate  = useNavigate()
+  const { t }     = useTranslation()
 
   const gradcamUrl =
     result.gradcam_url ||
@@ -81,29 +85,40 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
 
   const reasoningSections = parseReasoning(result.kg_reasoning_snippet)
 
-  const startConsultation = async (type: 'video' | 'voice' | 'chat') => {
-    if (!user) return
-    setConsultLoading(type)
+  // Opens the pre-screen bot instead of going directly to the doctor
+  const startConsultation = (type: 'video' | 'voice' | 'chat') => {
+    setPendingConsultType(type)
+    setShowPreScreen(true)
+  }
+
+  // Called when the bot finishes collecting answers
+  const handlePreScreenComplete = async (answers: PreScreenAnswers) => {
+    setShowPreScreen(false)
     try {
-      const { data } = await consultationApi.request({
-        patient_id: user.id,
-        case_id: result.case_id,
-        type,
-      })
-      navigate(`/consultation/${data.consultation_id}?type=${type}`)
-    } catch {
-      alert(t('common.error'))
+      await submitPreScreen(result.case_id, pendingConsultType, answers)
+    } catch (e) {
+      console.error('Pre-screen save failed', e)
+    }
+    // ── FIX 2: use consultationApi.request instead of undefined requestConsultation ──
+    setConsultLoading(pendingConsultType)
+    try {
+      const { data } = await consultationApi.request(
+        result.case_id ?? result.diagnosis_id,
+        pendingConsultType
+      )
+      navigate(`/consultation/${data.consultation_id}`)
+    } catch (e) {
+      console.error('Consultation request failed', e)
     } finally {
       setConsultLoading(null)
     }
   }
 
   const downloadReport = () => {
-    const urgencyKey = result.urgency as keyof typeof urgencyMap
-    const urgencyMap = {
+    const urgencyMap: Record<string, string> = {
       immediate: t('results.urgency.immediate'),
-      soon: t('results.urgency.soon'),
-      routine: t('results.urgency.routine'),
+      soon:      t('results.urgency.soon'),
+      routine:   t('results.urgency.routine'),
     }
     const content = [
       'RAREDIAG AI DIAGNOSTIC REPORT',
@@ -116,20 +131,22 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       'TOP DIAGNOSES:',
       ...result.top_diseases.map(
         (d, i) =>
-          `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%${d.icd_code ? ` (${d.icd_code})` : ''}${d.description ? `\n   ${d.description}` : ''}`
+          `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%` +
+          `${d.icd_code ? ` (${d.icd_code})` : ''}` +
+          `${d.description ? `\n   ${d.description}` : ''}`
       ),
       '',
       'URGENCY:',
-      urgencyMap[urgencyKey] ?? t('results.urgency.default'),
+      urgencyMap[result.urgency] ?? t('results.urgency.default'),
       '',
       'AI REASONING:',
       result.kg_reasoning_snippet,
     ].join('\n')
 
     const blob = new Blob([content], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
     a.download = `rarediag-report-${result.case_id}.txt`
     a.click()
     URL.revokeObjectURL(url)
@@ -138,28 +155,30 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
   const getUrgencyLabel = (urgency: string) => {
     const map: Record<string, string> = {
       immediate: t('results.urgency.immediate'),
-      soon: t('results.urgency.soon'),
-      routine: t('results.urgency.routine'),
+      soon:      t('results.urgency.soon'),
+      routine:   t('results.urgency.routine'),
     }
     return map[urgency] ?? t('results.urgency.default')
   }
 
   const getImportanceLabel = (imp: number) => {
-    if (imp >= 0.9) return t('results.critical')
-    if (imp >= 0.5) return t('results.high')
+    if (imp >= 0.9)  return t('results.critical')
+    if (imp >= 0.5)  return t('results.high')
     if (imp >= 0.15) return t('results.moderate')
     return t('results.low')
   }
 
-  const isHighRisk = result.risk_level === 'high'
-  const riskVariant = result.risk_level as 'high' | 'medium' | 'low'
+  const isHighRisk   = result.risk_level === 'high'
+  const riskVariant  = result.risk_level as 'high' | 'medium' | 'low'
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-display font-semibold text-foreground">{t('results.diagnosisResults')}</h2>
+          <h2 className="text-3xl font-display font-semibold text-foreground">
+            {t('results.diagnosisResults')}
+          </h2>
           <p className="text-sm text-muted-foreground mt-1">
             {t('results.caseId')}: <span className="font-mono text-xs">{result.case_id}</span>
           </p>
@@ -224,7 +243,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                           #{i + 1}
                         </span>
                         <div>
-                          <h3 className="text-lg font-display font-semibold text-foreground">{disease.name}</h3>
+                          <h3 className="text-lg font-display font-semibold text-foreground">
+                            {disease.name}
+                          </h3>
                           <div className="flex items-center gap-2 flex-wrap mt-0.5">
                             {disease.icd_code && (
                               <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
@@ -276,7 +297,10 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
             </div>
             {result.shap_values && result.shap_values.length > 0 ? (
               <>
-                <ResponsiveContainer width="100%" height={Math.max(200, result.shap_values.slice(0, 10).length * 36)}>
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(200, result.shap_values.slice(0, 10).length * 36)}
+                >
                   <BarChart
                     data={result.shap_values.slice(0, 10)}
                     layout="vertical"
@@ -298,9 +322,14 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                 <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {result.shap_values.slice(0, 6).map((sv, idx) => (
                     <div key={sv.symptom} className="flex items-center gap-2 text-xs">
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SHAP_COLORS[idx % SHAP_COLORS.length] }} />
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: SHAP_COLORS[idx % SHAP_COLORS.length] }}
+                      />
                       <span className="text-foreground font-medium capitalize">{sv.symptom}</span>
-                      <span className="text-muted-foreground ml-auto">{getImportanceLabel(sv.importance)}</span>
+                      <span className="text-muted-foreground ml-auto">
+                        {getImportanceLabel(sv.importance)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -319,7 +348,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
           <div className="rounded-2xl border bg-card p-6 space-y-5">
             <div className="flex items-center gap-2">
               <Brain className="w-5 h-5 text-violet-500" />
-              <h3 className="text-lg font-display font-semibold text-foreground">{t('results.aiReasoningTitle')}</h3>
+              <h3 className="text-lg font-display font-semibold text-foreground">
+                {t('results.aiReasoningTitle')}
+              </h3>
             </div>
             {reasoningSections.length > 0 ? (
               <div className="space-y-4">
@@ -327,7 +358,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                   <div key={i} className="rounded-xl border bg-muted/30 p-4 space-y-1">
                     <div className="flex items-center gap-2">
                       <ReasoningIcon icon={section.icon} />
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{section.label}</span>
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        {section.label}
+                      </span>
                     </div>
                     <p className="text-sm text-foreground leading-relaxed pl-6">{section.text}</p>
                   </div>
@@ -339,25 +372,39 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
               </p>
             )}
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">{t('results.differentialFlow')}</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                {t('results.differentialFlow')}
+              </p>
               <div className="p-4 rounded-xl bg-muted/50 font-mono text-xs space-y-2">
                 {result.top_diseases.slice(0, 3).map((d, i) => (
                   <div key={d.name} className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: SHAP_COLORS[i] }} />
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: SHAP_COLORS[i] }}
+                    />
                     <span className="text-muted-foreground">{t('results.patientSymptoms')}</span>
                     <span className="text-muted-foreground">──→</span>
                     <span className="text-foreground font-medium">{d.name}</span>
-                    <span className="text-muted-foreground ml-auto">{(d.probability * 100).toFixed(0)}%</span>
+                    <span className="text-muted-foreground ml-auto">
+                      {(d.probability * 100).toFixed(0)}%
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
             {result.kg_suggestions && result.kg_suggestions.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{t('results.kgAlsoSuggests')}</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t('results.kgAlsoSuggests')}
+                </p>
                 <div className="flex flex-wrap gap-1.5">
                   {result.kg_suggestions.map((s) => (
-                    <span key={s} className="text-xs px-2.5 py-1 rounded-full border border-border bg-muted/50 text-muted-foreground">{s}</span>
+                    <span
+                      key={s}
+                      className="text-xs px-2.5 py-1 rounded-full border border-border bg-muted/50 text-muted-foreground"
+                    >
+                      {s}
+                    </span>
                   ))}
                 </div>
               </div>
@@ -369,7 +416,9 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
         {gradcamUrl && (
           <TabsContent value="imaging" className="mt-4">
             <div className="rounded-2xl border bg-card p-6">
-              <h3 className="text-lg font-display font-semibold text-foreground mb-2">{t('results.gradcamTitle')}</h3>
+              <h3 className="text-lg font-display font-semibold text-foreground mb-2">
+                {t('results.gradcamTitle')}
+              </h3>
               <p className="text-sm text-muted-foreground mb-4">{t('results.gradcamDesc')}</p>
               <img src={gradcamUrl} alt="Grad-CAM visualization" className="w-full rounded-xl" />
               {result.image_result && (
@@ -384,29 +433,53 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
         )}
       </Tabs>
 
-      {/* Contact specialist */}
-      <div className={`rounded-2xl border p-6 ${isHighRisk ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10' : ''}`}>
-        <h3 className="text-lg font-display font-semibold text-foreground mb-1">
-          {isHighRisk ? t('results.speakWithSpecialist') : t('results.contactSpecialist')}
-        </h3>
-        <p className="text-sm text-muted-foreground mb-5">
-          {isHighRisk ? t('results.highRiskMessage') : t('results.consultMessage')}
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <Button variant="teal" className="gap-2" onClick={() => startConsultation('video')} disabled={!!consultLoading}>
-            <Video className="w-4 h-4" />
-            {consultLoading === 'video' ? t('results.connecting') : t('results.videoCall')}
-          </Button>
-          <Button variant="outline" className="gap-2" onClick={() => startConsultation('voice')} disabled={!!consultLoading}>
-            <Phone className="w-4 h-4" />
-            {consultLoading === 'voice' ? t('results.connecting') : t('results.voiceCall')}
-          </Button>
-          <Button variant="outline" className="gap-2" onClick={() => startConsultation('chat')} disabled={!!consultLoading}>
-            <MessageCircle className="w-4 h-4" />
-            {consultLoading === 'chat' ? t('results.connecting') : t('results.chat')}
-          </Button>
+      {/* ── FIX 3: PreScreenBot renders here, replaces buttons when active ── */}
+      {showPreScreen ? (
+        <PreScreenBot
+          diagnosisResult={result}
+          consultType={pendingConsultType}
+          onComplete={handlePreScreenComplete}
+          onCancel={() => setShowPreScreen(false)}
+        />
+      ) : (
+        <div className={`rounded-2xl border p-6 ${isHighRisk ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10' : ''}`}>
+          <h3 className="text-lg font-display font-semibold text-foreground mb-1">
+            {isHighRisk ? t('results.speakWithSpecialist') : t('results.contactSpecialist')}
+          </h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            {isHighRisk ? t('results.highRiskMessage') : t('results.consultMessage')}
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="teal"
+              className="gap-2"
+              onClick={() => startConsultation('video')}
+              disabled={!!consultLoading}
+            >
+              <Video className="w-4 h-4" />
+              {consultLoading === 'video' ? t('results.connecting') : t('results.videoCall')}
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => startConsultation('voice')}
+              disabled={!!consultLoading}
+            >
+              <Phone className="w-4 h-4" />
+              {consultLoading === 'voice' ? t('results.connecting') : t('results.voiceCall')}
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => startConsultation('chat')}
+              disabled={!!consultLoading}
+            >
+              <MessageCircle className="w-4 h-4" />
+              {consultLoading === 'chat' ? t('results.connecting') : t('results.chat')}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       <FeedbackWidget context="diagnosis" />
     </div>

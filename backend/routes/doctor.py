@@ -76,6 +76,17 @@ def get_case(case_id: str) -> Dict[str, Any]:
         'ip': request.remote_addr,
         'ts': datetime.now(timezone.utc)
     })
+    prescreen = current_app.db.pre_screen_answers.find_one(
+    {'diagnosis_id': ObjectId(case_id)}
+    )
+    if prescreen:
+        prescreen['_id'] = str(prescreen['_id'])
+        prescreen['diagnosis_id'] = str(prescreen['diagnosis_id'])
+        prescreen['user_id'] = str(prescreen['user_id'])
+        if prescreen.get('created_at'):
+            prescreen['created_at'] = prescreen['created_at'].isoformat()
+        case['pre_screen_answers'] = prescreen.get('answers', {})
+        case['pre_screen_flags'] = prescreen.get('triage_flags', [])
 
     return jsonify(case)
 

@@ -164,4 +164,17 @@ export const consultationApi = {
   get: (id: string) => api.get<Consultation>(`/api/consultations/${id}`),
 }
 
+
+export async function submitPreScreen(
+  diagnosisId: string,
+  consultType: 'video' | 'voice' | 'chat',
+  answers: Record<string, unknown>
+) {
+  const res = await api.post('/api/prescreen/submit', {
+    diagnosis_id: diagnosisId,
+    consult_type: consultType,
+    answers,
+  })
+  return res.data
+}
 export default api
