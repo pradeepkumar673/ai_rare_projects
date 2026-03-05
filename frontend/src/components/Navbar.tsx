@@ -1,8 +1,11 @@
+// src/components/Navbar.tsx
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Menu, X, Activity, LogOut, Sun, Moon, Bell } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { LanguageSwitcher } from '@/components/ui/language-switcher'
 import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/lib/utils'
 
@@ -14,6 +17,7 @@ interface NavbarProps {
 export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { isAuthenticated, user, clearAuth } = useAuthStore()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -70,7 +74,7 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                How It Works
+                {t('nav.howItWorks')}
               </Link>
               <Link
                 to="/#partners"
@@ -81,7 +85,7 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                Partners
+                {t('nav.partners')}
               </Link>
             </>
           )}
@@ -96,7 +100,7 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                Dashboard
+                {t('nav.dashboard')}
               </Link>
               {user.role === 'user' && (
                 <Link
@@ -108,7 +112,7 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  New Diagnosis
+                  {t('nav.newDiagnosis')}
                 </Link>
               )}
             </>
@@ -116,7 +120,10 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
         </div>
 
         {/* Right actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {/* Language Switcher */}
+          <LanguageSwitcher variant={isHome ? 'light' : 'dark'} />
+
           {/* Dark mode toggle */}
           <button
             onClick={toggleDarkMode}
@@ -133,9 +140,8 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
 
           {isAuthenticated ? (
             <>
-              {/* Notifications placeholder */}
               <button
-                aria-label="Notifications"
+                aria-label={t('nav.notifications')}
                 className={cn(
                   'w-9 h-9 rounded-xl flex items-center justify-center transition-colors relative',
                   isHome
@@ -147,10 +153,9 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-teal-500" />
               </button>
 
-              {/* User avatar */}
               <button
                 onClick={handleLogout}
-                title="Logout"
+                title={t('nav.logout')}
                 className="flex items-center gap-2 rounded-xl px-2 py-1 hover:bg-accent transition-colors"
               >
                 <Avatar className="w-7 h-7">
@@ -170,21 +175,21 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
               </button>
             </>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 ms-1">
               <Button
                 variant="ghost"
                 size="sm"
                 asChild
                 className={isHome ? 'text-slate-300 hover:text-white hover:bg-white/10' : ''}
               >
-                <Link to="/login">Log in</Link>
+                <Link to="/login">{t('nav.login')}</Link>
               </Button>
               <Button
                 variant={isHome ? 'teal' : 'default'}
                 size="sm"
                 asChild
               >
-                <Link to="/register">Sign up</Link>
+                <Link to="/register">{t('nav.signup')}</Link>
               </Button>
             </div>
           )}
@@ -209,52 +214,78 @@ export function Navbar({ darkMode, toggleDarkMode }: NavbarProps) {
           className={cn(
             'md:hidden border-t px-4 py-4 space-y-3',
             isHome
-              ? 'border-white/10 bg-slate-950'
-              : 'border-border bg-background'
+              ? 'bg-slate-950 border-white/10'
+              : 'bg-background border-border'
           )}
         >
-          {isAuthenticated ? (
+          {!isAuthenticated && (
             <>
               <Link
-                to={`/dashboard/${user?.role}`}
-                className="block text-sm text-muted-foreground hover:text-foreground py-1.5"
+                to="/#how-it-works"
                 onClick={() => setMobileOpen(false)}
+                className={cn(
+                  'block text-sm font-medium py-2',
+                  isHome ? 'text-slate-300' : 'text-foreground'
+                )}
               >
-                Dashboard
+                {t('nav.howItWorks')}
               </Link>
-              {user?.role === 'user' && (
+              <Link
+                to="/#partners"
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  'block text-sm font-medium py-2',
+                  isHome ? 'text-slate-300' : 'text-foreground'
+                )}
+              >
+                {t('nav.partners')}
+              </Link>
+            </>
+          )}
+          {isAuthenticated && user && (
+            <>
+              <Link
+                to={`/dashboard/${user.role}`}
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  'block text-sm font-medium py-2',
+                  isHome ? 'text-slate-300' : 'text-foreground'
+                )}
+              >
+                {t('nav.dashboard')}
+              </Link>
+              {user.role === 'user' && (
                 <Link
                   to="/diagnose"
-                  className="block text-sm text-muted-foreground hover:text-foreground py-1.5"
                   onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'block text-sm font-medium py-2',
+                    isHome ? 'text-slate-300' : 'text-foreground'
+                  )}
                 >
-                  New Diagnosis
+                  {t('nav.newDiagnosis')}
                 </Link>
               )}
               <button
                 onClick={handleLogout}
-                className="block text-sm text-red-500 py-1.5"
+                className={cn(
+                  'block text-sm font-medium py-2 text-left',
+                  isHome ? 'text-slate-300' : 'text-foreground'
+                )}
               >
-                Logout
+                {t('nav.logout')}
               </button>
             </>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                className="block text-sm text-muted-foreground hover:text-foreground py-1.5"
-                onClick={() => setMobileOpen(false)}
-              >
-                Log in
-              </Link>
-              <Link
-                to="/register"
-                className="block text-sm text-teal-600 dark:text-teal-400 font-medium py-1.5"
-                onClick={() => setMobileOpen(false)}
-              >
-                Sign up
-              </Link>
-            </>
+          )}
+          {!isAuthenticated && (
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" size="sm" asChild className="flex-1">
+                <Link to="/login">{t('nav.login')}</Link>
+              </Button>
+              <Button variant="teal" size="sm" asChild className="flex-1">
+                <Link to="/register">{t('nav.signup')}</Link>
+              </Button>
+            </div>
           )}
         </div>
       )}

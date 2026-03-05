@@ -29,25 +29,26 @@ diagnosis_bp = Blueprint('diagnosis', __name__)
 # -------------------------------------------------------------------
 # Helper to get models from app context
 # -------------------------------------------------------------------
-def get_structured_predictor() -> Optional[StructuredPredictor]:
+def get_structured_predictor():
     return getattr(current_app, 'structured_predictor', None)
 
-def get_image_predictor() -> Optional[ImagePredictor]:
+def get_image_predictor():
     return getattr(current_app, 'image_predictor', None)
 
-def get_fusion() -> Optional[MultimodalFusion]:
+def get_fusion():
     return getattr(current_app, 'fusion', None)
 
-def get_kg() -> Optional[KnowledgeGraph]:
+def get_kg():
     return getattr(current_app, 'kg', None)
+
 
 # -------------------------------------------------------------------
 # Prediction endpoint
 # -------------------------------------------------------------------
 @diagnosis_bp.route('/predict', methods=['POST'])
-@jwt_required()   # ← re-enabled; was commented out while get_jwt_identity() was still called
+@jwt_required()
 def predict() -> Dict[str, Any]:
-    user_id = get_jwt_identity()  # safe now that @jwt_required() is active
+    user_id = get_jwt_identity()
 
     structured = get_structured_predictor()
     if structured is None:
@@ -74,7 +75,6 @@ def predict() -> Dict[str, Any]:
     if not validated.consent:
         return jsonify({'error': 'Consent must be given'}), 400
 
-    #symptoms = normalize_symptoms(validated.symptoms)
     symptoms = validated.symptoms
     demographics = {
         'age': validated.age,
@@ -100,7 +100,6 @@ def predict() -> Dict[str, Any]:
             validated.image.save(tmp.name)
             with open(tmp.name, 'rb') as f:
                 disease, conf, probs, heatmap = image_predictor.predict(f)
-            # Generate heatmap overlay
             original = cv2.imread(tmp.name)
             if original is not None:
                 heatmap_colored = cv2.applyColorMap((heatmap * 255).astype(np.uint8), cv2.COLORMAP_JET)
@@ -157,6 +156,133 @@ def predict() -> Dict[str, Any]:
     # Risk assessment
     risk_level, urgency = assess_risk(final_top5[0][1], symptoms, demographics, kg)
 
+    # ------------------------------------------------------------------
+    # Enrich top diseases with KB info (description, icd_code, category)
+    # ------------------------------------------------------------------
+    kb_info_map: Dict[str, Dict] = {}
+    if hasattr(structured, 'get_disease_info'):
+        # RareDiseasePredictor has get_disease_info
+        for disease_name, _ in final_top5:
+            info = structured.get_disease_info(disease_name)
+            if info:
+                kb_info_map[disease_name] = info
+    elif hasattr(structured, 'diseases'):
+        # Also try direct diseases list
+        for d in structured.diseases:
+            kb_info_map[d['name']] = d
+
+    # Build enriched top_diseases list for the response
+    top_diseases = []
+    for disease_name, prob in final_top5:
+        info = kb_info_map.get(disease_name, {})
+        entry: Dict[str, Any] = {
+            'name': disease_name,
+            'probability': float(prob),
+        }
+        if info.get('description'):
+            entry['description'] = info['description']
+        if info.get('orpha_code'):
+            entry['icd_code'] = f"ORPHA:{info['orpha_code']}"
+        if info.get('category'):
+            entry['category'] = info['category']
+        top_diseases.append(entry)
+
+    confidence = float(final_top5[0][1]) if final_top5 else 0.0
+
+    # Normalize risk/urgency
+    risk_map = {'High': 'high', 'Medium': 'medium', 'Low': 'low'}
+    urgency_map = {
+        'Emergency': 'immediate',
+        'Immediate': 'immediate',
+        'Immediate (within 24h)': 'immediate',
+        'Immediate (rare cluster)': 'immediate',
+        'Soon (within 1 week)': 'soon',
+        'Routine (schedule appointment)': 'routine',
+    }
+    normalized_risk = risk_map.get(risk_level, risk_level.lower())
+    normalized_urgency = urgency_map.get(urgency, 'routine')
+
+    # ------------------------------------------------------------------
+    # Build a rich KG reasoning snippet
+    # ------------------------------------------------------------------
+    top_disease_name = final_top5[0][0] if final_top5 else 'Unknown'
+    top_info = kb_info_map.get(top_disease_name, {})
+    matched_symptoms = []
+    if top_info.get('symptoms'):
+        disease_syms = [s.lower() for s in top_info['symptoms']]
+        matched_symptoms = [s for s in symptoms if s.lower() in disease_syms]
+
+    kg_snippet_parts = []
+
+    # Primary diagnosis explanation
+    if top_info.get('description'):
+        kg_snippet_parts.append(f"Primary AI Prediction: {top_disease_name}\n{top_info['description']}")
+    else:
+        kg_snippet_parts.append(f"Primary AI Prediction: {top_disease_name}")
+
+    # Symptom match explanation
+    if matched_symptoms:
+        kg_snippet_parts.append(
+            f"\nMatched Symptoms: {len(matched_symptoms)} of your symptoms align with {top_disease_name} — "
+            f"specifically: {', '.join(matched_symptoms[:5])}{'...' if len(matched_symptoms) > 5 else ''}."
+        )
+
+    # Required symptoms note
+    if top_info.get('required'):
+        required = top_info['required']
+        matched_req = [r for r in required if r.lower() in [s.lower() for s in symptoms]]
+        if matched_req:
+            kg_snippet_parts.append(
+                f"\nKey Diagnostic Criteria Met: {', '.join(matched_req)} — these are hallmark features of {top_disease_name}."
+            )
+        else:
+            kg_snippet_parts.append(
+                f"\nNote: Classic required criteria ({', '.join(required)}) were not reported. Consider further evaluation."
+            )
+
+    # KG matches
+    if kg_diseases:
+        kg_snippet_parts.append(
+            f"\nKnowledge Graph Analysis: Found {len(kg_diseases)} candidate diseases. "
+            f"Top KG matches: {', '.join(d for d, _ in kg_diseases[:3])}."
+        )
+    else:
+        kg_snippet_parts.append(
+            "\nKnowledge Graph Analysis: No strong graph matches found. Prediction is based on symptom pattern analysis alone."
+        )
+
+    # Category info
+    if top_info.get('category'):
+        kg_snippet_parts.append(f"\nDisease Category: {top_info['category']}")
+
+    kg_snippet = '\n'.join(kg_snippet_parts)
+
+    # ------------------------------------------------------------------
+    # Build SHAP values — use symptom names with their importance scores
+    # ------------------------------------------------------------------
+    # shap_top is a list of (symptom_name, importance_float)
+    shap_values_response = [
+        {'symptom': s, 'importance': float(imp)}
+        for s, imp in shap_top
+        if float(imp) > 0
+    ]
+
+    # If shap is empty/zero (common with KB predictor), fall back to
+    # showing which of the patient's symptoms matched the top disease
+    if not shap_values_response and symptoms:
+        disease_syms_set = set(top_info.get('symptoms', []))
+        required_set = set(s.lower() for s in top_info.get('required', []))
+        for sym in symptoms:
+            sym_lower = sym.lower()
+            if sym_lower in required_set:
+                importance = 1.0
+            elif sym_lower in [s.lower() for s in disease_syms_set]:
+                importance = 0.6
+            else:
+                importance = 0.1
+            shap_values_response.append({'symptom': sym, 'importance': importance})
+        shap_values_response.sort(key=lambda x: x['importance'], reverse=True)
+
     # Save diagnosis record
     diagnosis_record: Dict[str, Any] = {
         'user_id': ObjectId(user_id),
@@ -170,14 +296,14 @@ def predict() -> Dict[str, Any]:
         'agreement': agreement,
         'kg_suggestions': [d for d, _ in kg_diseases[:5]],
         'shap_explanations': [(s, float(imp)) for s, imp in shap_top],
-        'shap_values': shap_values_full.tolist(),
+        'shap_values': shap_values_full.tolist() if hasattr(shap_values_full, 'tolist') else list(shap_values_full),
         'consent': validated.consent,
         'created_at': datetime.now(timezone.utc)
     }
     result = current_app.db.diagnoses.insert_one(diagnosis_record)
     diagnosis_id = str(result.inserted_id)
 
-    # PDF generation (synchronous for now)
+    # PDF generation
     try:
         generate_pdf_report(diagnosis_record, diagnosis_id, current_app.config['PDF_REPORT_DIR'])
     except Exception as e:
@@ -192,47 +318,14 @@ def predict() -> Dict[str, Any]:
         'ts': datetime.now(timezone.utc)
     })
 
-    # Build response in the shape DiagnoseResponse (frontend) expects:
-    # { case_id, top_diseases[{name, probability}], confidence, risk_level,
-    #   urgency, shap_values[{symptom, importance}], kg_reasoning_snippet }
-    top_diseases = [
-        {'name': d, 'probability': float(p)}
-        for d, p in final_top5
-    ]
-    confidence = float(final_top5[0][1]) if final_top5 else 0.0
-
-    # Normalize risk_level and urgency to lowercase to match frontend types
-    risk_map = {'High': 'high', 'Medium': 'medium', 'Low': 'low'}
-    urgency_map = {
-        'Emergency': 'immediate',
-        'Immediate': 'immediate',
-        'Immediate (within 24h)': 'immediate',
-        'Immediate (rare cluster)': 'immediate',
-        'Soon (within 1 week)': 'soon',
-        'Routine (schedule appointment)': 'routine',
-    }
-    normalized_risk = risk_map.get(risk_level, risk_level.lower())
-    normalized_urgency = urgency_map.get(urgency, 'routine')
-
-    # Build KG reasoning snippet
-    kg_snippet = ''
-    if kg_diseases:
-        kg_snippet = f"Knowledge graph analysis found {len(kg_diseases)} related diseases for your symptoms. "
-        kg_snippet += f"Top matches: {', '.join(d for d, _ in kg_diseases[:3])}."
-    else:
-        kg_snippet = "No strong knowledge graph matches found. AI prediction is based on symptom patterns alone."
-
     response: Dict[str, Any] = {
         'case_id': diagnosis_id,
-        'top_diseases': top_diseases,
+        'top_diseases': top_diseases,           # ← now includes description, icd_code, category
         'confidence': confidence,
         'risk_level': normalized_risk,
         'urgency': normalized_urgency,
-        'shap_values': [
-            {'symptom': s, 'importance': float(imp)}
-            for s, imp in shap_top
-        ],
-        'kg_reasoning_snippet': kg_snippet,
+        'shap_values': shap_values_response,    # ← now always populated
+        'kg_reasoning_snippet': kg_snippet,     # ← now rich multi-line explanation
         'kg_suggestions': [d for d, _ in kg_diseases[:5]],
         'agreement': agreement,
         'specialist_review': agreement == 'low' and normalized_risk == 'high',

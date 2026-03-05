@@ -1,4 +1,6 @@
+// src/pages/Home.tsx
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Activity, Brain, Shield, Users, Zap, ArrowRight, ChevronRight, Star } from 'lucide-react'
 import { ResponsiveHeroBanner } from '@/components/ui/responsive-hero-banner'
 import { GlowingEffect } from '@/components/ui/glowing-effect'
@@ -7,64 +9,11 @@ const PARTNERS = [
   'Mayo Clinic', 'NIH', 'WHO', 'Johns Hopkins', 'Stanford Medicine', 'Cleveland Clinic',
 ]
 
-const FEATURES = [
-  {
-    icon: Brain,
-    title: 'AI-Powered Diagnosis',
-    desc: 'Multi-modal ML models trained on rare disease datasets with SHAP-explained predictions.',
-    color: 'text-violet-500',
-    bg: 'bg-violet-50 dark:bg-violet-950/20',
-  },
-  {
-    icon: Activity,
-    title: 'Real-time Monitoring',
-    desc: 'Track symptom progression and receive urgency alerts when risk levels change.',
-    color: 'text-teal-500',
-    bg: 'bg-teal-50 dark:bg-teal-950/20',
-  },
-  {
-    icon: Users,
-    title: 'Specialist Network',
-    desc: 'Connect with rare disease experts via video, voice, or chat consultations.',
-    color: 'text-blue-500',
-    bg: 'bg-blue-50 dark:bg-blue-950/20',
-  },
-  {
-    icon: Shield,
-    title: 'HIPAA Compliant',
-    desc: 'End-to-end encrypted communications and secure, privacy-first data handling.',
-    color: 'text-emerald-500',
-    bg: 'bg-emerald-50 dark:bg-emerald-950/20',
-  },
-  {
-    icon: Zap,
-    title: 'Instant Results',
-    desc: 'Receive a detailed diagnostic report in under 30 seconds with confidence scores.',
-    color: 'text-amber-500',
-    bg: 'bg-amber-50 dark:bg-amber-950/20',
-  },
-  {
-    icon: Star,
-    title: 'Rare Disease Focus',
-    desc: 'Specialized knowledge graph covering 3,000+ rare diseases and phenotypes.',
-    color: 'text-rose-500',
-    bg: 'bg-rose-50 dark:bg-rose-950/20',
-  },
-]
-
-const STEPS = [
-  { num: '01', title: 'Describe Symptoms', desc: 'Fill out our clinical intake form with your symptoms, history, and optional lab values.' },
-  { num: '02', title: 'AI Analysis', desc: 'Our models run multi-modal analysis, knowledge graph reasoning, and SHAP attribution.' },
-  { num: '03', title: 'Review Results', desc: 'Get ranked disease predictions with probability scores and urgency recommendations.' },
-  { num: '04', title: 'Consult a Specialist', desc: 'If high-risk, connect with a board-certified specialist in real-time.' },
-]
-
 /** Hero visual – animated dashboard mock */
 function HeroVisual() {
   return (
     <div className="w-full max-w-md">
       <div className="glass rounded-3xl p-6 border border-white/10 shadow-2xl">
-        {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center">
             <Activity className="w-5 h-5 text-white" />
@@ -80,7 +29,6 @@ function HeroVisual() {
           </div>
         </div>
 
-        {/* Top diseases */}
         <div className="space-y-3 mb-5">
           {[
             { name: 'Fabry Disease', prob: 78, color: 'bg-teal-500' },
@@ -102,7 +50,6 @@ function HeroVisual() {
           ))}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t border-white/10">
           <div className="text-xs text-white/50">Confidence: <span className="text-white/80 font-medium">87%</span></div>
           <button className="text-xs flex items-center gap-1 text-teal-400 hover:text-teal-300 font-medium">
@@ -111,7 +58,6 @@ function HeroVisual() {
         </div>
       </div>
 
-      {/* Floating notification card */}
       <div className="mt-3 glass rounded-2xl p-3 border border-white/10 flex items-center gap-3 animate-fade-in" style={{ animationDelay: '0.4s' }}>
         <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
           <Zap className="w-4 h-4 text-amber-400" />
@@ -130,30 +76,83 @@ function HeroVisual() {
 
 export function Home() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
+
+  const FEATURES = [
+    {
+      icon: Brain,
+      title: t('home.features.aiDiagnosis'),
+      desc: t('home.features.aiDiagnosisDesc'),
+      color: 'text-violet-500',
+      bg: 'bg-violet-50 dark:bg-violet-950/20',
+    },
+    {
+      icon: Activity,
+      title: t('home.features.realTimeMonitoring'),
+      desc: t('home.features.realTimeMonitoringDesc'),
+      color: 'text-teal-500',
+      bg: 'bg-teal-50 dark:bg-teal-950/20',
+    },
+    {
+      icon: Users,
+      title: t('home.features.specialistNetwork'),
+      desc: t('home.features.specialistNetworkDesc'),
+      color: 'text-blue-500',
+      bg: 'bg-blue-50 dark:bg-blue-950/20',
+    },
+    {
+      icon: Shield,
+      title: t('home.features.hipaaCompliant'),
+      desc: t('home.features.hipaaCompliantDesc'),
+      color: 'text-emerald-500',
+      bg: 'bg-emerald-50 dark:bg-emerald-950/20',
+    },
+    {
+      icon: Zap,
+      title: t('home.features.instantResults'),
+      desc: t('home.features.instantResultsDesc'),
+      color: 'text-amber-500',
+      bg: 'bg-amber-50 dark:bg-amber-950/20',
+    },
+    {
+      icon: Star,
+      title: t('home.features.rareDiseasesFocus'),
+      desc: t('home.features.rareDiseaseFocusDesc'),
+      color: 'text-rose-500',
+      bg: 'bg-rose-50 dark:bg-rose-950/20',
+    },
+  ]
+
+  const STEPS = [
+    { num: '01', title: t('home.steps.step1Title'), desc: t('home.steps.step1Desc') },
+    { num: '02', title: t('home.steps.step2Title'), desc: t('home.steps.step2Desc') },
+    { num: '03', title: t('home.steps.step3Title'), desc: t('home.steps.step3Desc') },
+    { num: '04', title: t('home.steps.step4Title'), desc: t('home.steps.step4Desc') },
+  ]
 
   return (
     <div>
       {/* Hero */}
       <ResponsiveHeroBanner
-        badge="Powered by Advanced AI & Knowledge Graphs"
+        badge={t('home.badge')}
         headline={
           <>
-            AI-Powered{' '}
-            <span className="text-teal-400">Rare Disease</span>
+            {t('home.headline1')}{' '}
+            <span className="text-teal-400">{t('home.headline2')}</span>
             <br />
-            Diagnosis &{' '}
-            <span className="italic font-light">Telemedicine</span>
+            {t('home.headline3')}{' '}
+            <span className="italic font-light">{t('home.headline4')}</span>
           </>
         }
-        subheadline="Get AI-assisted diagnosis for rare conditions in under a minute. Connect with specialists worldwide for expert second opinions."
+        subheadline={t('home.subheadline')}
         actions={[
           {
-            label: 'Get Diagnosed',
+            label: t('home.getDiagnosed'),
             onClick: () => navigate('/login?role=user'),
             icon: <Activity className="w-4 h-4" />,
           },
           {
-            label: 'For Doctors',
+            label: t('home.forDoctors'),
             onClick: () => navigate('/login?role=doctor'),
             variant: 'outline',
             icon: <Users className="w-4 h-4" />,
@@ -162,11 +161,11 @@ export function Home() {
         visual={<HeroVisual />}
       />
 
-      {/* Partners / Trust signals */}
+      {/* Partners */}
       <section id="partners" className="py-12 border-b bg-muted/30">
         <div className="container mx-auto px-4 text-center">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-8">
-            Trusted by researchers & institutions
+            {t('home.trustedBy')}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-8 opacity-50">
             {PARTNERS.map((p) => (
@@ -182,11 +181,11 @@ export function Home() {
       <section className="py-24 container mx-auto px-4">
         <div className="text-center mb-16">
           <h2 className="text-4xl lg:text-5xl font-display font-semibold text-foreground mb-4">
-            Everything you need to{' '}
-            <span className="text-teal-600 dark:text-teal-400">diagnose the rare</span>
+            {t('home.everythingYouNeed')}{' '}
+            <span className="text-teal-600 dark:text-teal-400">{t('home.diagnoseTheRare')}</span>
           </h2>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
-            From symptom input to specialist consultation — a complete platform for rare disease care.
+            {t('home.featuresSubtitle')}
           </p>
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -209,9 +208,9 @@ export function Home() {
         <div className="container mx-auto px-4">
           <div className="text-center mb-16">
             <h2 className="text-4xl lg:text-5xl font-display font-semibold text-foreground mb-4">
-              How it works
+              {t('home.howItWorks')}
             </h2>
-            <p className="text-lg text-muted-foreground">Four steps from symptoms to answers.</p>
+            <p className="text-lg text-muted-foreground">{t('home.howItWorksSubtitle')}</p>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
             {STEPS.map((step, i) => (
@@ -234,24 +233,24 @@ export function Home() {
       <section className="py-24 bg-gradient-to-br from-teal-600 to-teal-800">
         <div className="container mx-auto px-4 text-center">
           <h2 className="text-4xl lg:text-5xl font-display font-semibold text-white mb-6">
-            Ready to get answers?
+            {t('home.readyToGetAnswers')}
           </h2>
           <p className="text-lg text-teal-100 max-w-xl mx-auto mb-10">
-            Join thousands of patients and physicians using AI to tackle rare diseases.
+            {t('home.ctaSubtitle')}
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <button
               onClick={() => navigate('/register')}
               className="inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-white text-teal-700 font-semibold hover:bg-teal-50 transition-colors shadow-lg"
             >
-              Start for free
+              {t('home.startForFree')}
               <ArrowRight className="w-4 h-4" />
             </button>
             <button
               onClick={() => navigate('/login?role=doctor')}
               className="inline-flex items-center gap-2 px-8 py-4 rounded-xl border border-white/30 text-white font-semibold hover:bg-white/10 transition-colors"
             >
-              I'm a doctor
+              {t('home.imADoctor')}
             </button>
           </div>
         </div>

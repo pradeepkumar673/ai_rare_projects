@@ -1,16 +1,20 @@
+// src/components/DiagnosisResult.tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { Download, Video, Phone, MessageCircle, ExternalLink, Info, AlertTriangle } from 'lucide-react'
+import {
+  Download, Video, Phone, MessageCircle, ExternalLink,
+  Info, AlertTriangle, Brain, FlaskConical, Network, CheckCircle2, XCircle,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { GlowingEffect } from '@/components/ui/glowing-effect'
 import { FeedbackWidget } from '@/components/ui/feedback-widget'
-import { getRiskColor, getUrgencyLabel } from '@/lib/utils'
 import type { DiagnoseResponse } from '@/lib/api'
 import { consultationApi } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
@@ -22,17 +26,60 @@ interface DiagnosisResultProps {
 
 const SHAP_COLORS = ['#0d9488', '#14b8a6', '#2dd4bf', '#5eead4', '#99f6e4', '#ccfbf1']
 
+function parseReasoning(snippet: string): { label: string; text: string; icon: string }[] {
+  if (!snippet) return []
+  const sections: { label: string; text: string; icon: string }[] = []
+  const lines = snippet.split('\n').filter(Boolean)
+  for (const line of lines) {
+    if (line.startsWith('Primary AI Prediction:')) {
+      const [, ...rest] = line.split(':')
+      sections.push({ label: 'Primary Prediction', text: rest.join(':').trim(), icon: 'brain' })
+    } else if (line.startsWith('Matched Symptoms:')) {
+      sections.push({ label: 'Symptom Match', text: line.replace('Matched Symptoms:', '').trim(), icon: 'flask' })
+    } else if (line.startsWith('Key Diagnostic Criteria Met:')) {
+      sections.push({ label: 'Criteria Met ✓', text: line.replace('Key Diagnostic Criteria Met:', '').trim(), icon: 'check' })
+    } else if (line.startsWith('Note:')) {
+      sections.push({ label: 'Clinical Note', text: line.replace('Note:', '').trim(), icon: 'info' })
+    } else if (line.startsWith('Knowledge Graph Analysis:')) {
+      sections.push({ label: 'Knowledge Graph', text: line.replace('Knowledge Graph Analysis:', '').trim(), icon: 'network' })
+    } else if (line.startsWith('Disease Category:')) {
+      sections.push({ label: 'Category', text: line.replace('Disease Category:', '').trim(), icon: 'info' })
+    } else if (line.trim()) {
+      if (sections.length > 0) {
+        sections[sections.length - 1].text += ' ' + line.trim()
+      } else {
+        sections.push({ label: 'Analysis', text: line.trim(), icon: 'brain' })
+      }
+    }
+  }
+  return sections
+}
+
+function ReasoningIcon({ icon }: { icon: string }) {
+  const cls = 'w-4 h-4 shrink-0 mt-0.5'
+  switch (icon) {
+    case 'brain': return <Brain className={`${cls} text-violet-500`} />
+    case 'flask': return <FlaskConical className={`${cls} text-teal-500`} />
+    case 'network': return <Network className={`${cls} text-blue-500`} />
+    case 'check': return <CheckCircle2 className={`${cls} text-emerald-500`} />
+    case 'x': return <XCircle className={`${cls} text-red-500`} />
+    default: return <Info className={`${cls} text-slate-400`} />
+  }
+}
+
 export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
   const [consultLoading, setConsultLoading] = useState<string | null>(null)
   const { user } = useAuthStore()
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
-  // Derive a gradcam_url from image_result.overlay_b64 if gradcam_url isn't directly present
   const gradcamUrl =
     result.gradcam_url ||
     (result.image_result?.overlay_b64
       ? `data:image/png;base64,${result.image_result.overlay_b64}`
       : undefined)
+
+  const reasoningSections = parseReasoning(result.kg_reasoning_snippet)
 
   const startConsultation = async (type: 'video' | 'voice' | 'chat') => {
     if (!user) return
@@ -45,13 +92,19 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       })
       navigate(`/consultation/${data.consultation_id}?type=${type}`)
     } catch {
-      alert('Failed to start consultation. Please try again.')
+      alert(t('common.error'))
     } finally {
       setConsultLoading(null)
     }
   }
 
   const downloadReport = () => {
+    const urgencyKey = result.urgency as keyof typeof urgencyMap
+    const urgencyMap = {
+      immediate: t('results.urgency.immediate'),
+      soon: t('results.urgency.soon'),
+      routine: t('results.urgency.routine'),
+    }
     const content = [
       'RAREDIAG AI DIAGNOSTIC REPORT',
       '==============================',
@@ -63,13 +116,13 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       'TOP DIAGNOSES:',
       ...result.top_diseases.map(
         (d, i) =>
-          `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%${d.icd_code ? ` (${d.icd_code})` : ''}`
+          `${i + 1}. ${d.name} — ${(d.probability * 100).toFixed(0)}%${d.icd_code ? ` (${d.icd_code})` : ''}${d.description ? `\n   ${d.description}` : ''}`
       ),
       '',
       'URGENCY:',
-      getUrgencyLabel(result.urgency),
+      urgencyMap[urgencyKey] ?? t('results.urgency.default'),
       '',
-      'KNOWLEDGE GRAPH REASONING:',
+      'AI REASONING:',
       result.kg_reasoning_snippet,
     ].join('\n')
 
@@ -82,34 +135,50 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
     URL.revokeObjectURL(url)
   }
 
+  const getUrgencyLabel = (urgency: string) => {
+    const map: Record<string, string> = {
+      immediate: t('results.urgency.immediate'),
+      soon: t('results.urgency.soon'),
+      routine: t('results.urgency.routine'),
+    }
+    return map[urgency] ?? t('results.urgency.default')
+  }
+
+  const getImportanceLabel = (imp: number) => {
+    if (imp >= 0.9) return t('results.critical')
+    if (imp >= 0.5) return t('results.high')
+    if (imp >= 0.15) return t('results.moderate')
+    return t('results.low')
+  }
+
   const isHighRisk = result.risk_level === 'high'
   const riskVariant = result.risk_level as 'high' | 'medium' | 'low'
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header row */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-display font-semibold text-foreground">Diagnosis Results</h2>
+          <h2 className="text-3xl font-display font-semibold text-foreground">{t('results.diagnosisResults')}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Case ID: <span className="font-mono text-xs">{result.case_id}</span>
+            {t('results.caseId')}: <span className="font-mono text-xs">{result.case_id}</span>
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <Badge variant={riskVariant} className="text-sm px-3 py-1">
-            {result.risk_level.toUpperCase()} RISK
+            {result.risk_level.toUpperCase()} {t('results.risk')}
           </Badge>
           <div className="text-sm text-muted-foreground">
-            AI Confidence:{' '}
+            {t('results.aiConfidence')}:{' '}
             <span className="font-semibold text-foreground">
               {(result.confidence * 100).toFixed(0)}%
             </span>
           </div>
           <Button variant="outline" size="sm" onClick={downloadReport} className="gap-1.5">
-            <Download className="w-3.5 h-3.5" /> Report
+            <Download className="w-3.5 h-3.5" /> {t('results.downloadReport')}
           </Button>
           <Button variant="ghost" size="sm" onClick={onReset}>
-            New diagnosis
+            {t('results.newDiagnosis')}
           </Button>
         </div>
       </div>
@@ -136,37 +205,42 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
 
       <Tabs defaultValue="diseases">
         <TabsList className="w-full sm:w-auto">
-          <TabsTrigger value="diseases">Top Diseases</TabsTrigger>
-          <TabsTrigger value="shap">Symptom Analysis</TabsTrigger>
-          <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
-          {gradcamUrl && <TabsTrigger value="imaging">Imaging</TabsTrigger>}
+          <TabsTrigger value="diseases">{t('results.topDiseases')}</TabsTrigger>
+          <TabsTrigger value="shap">{t('results.symptomAnalysis')}</TabsTrigger>
+          <TabsTrigger value="reasoning">{t('results.aiReasoning')}</TabsTrigger>
+          {gradcamUrl && <TabsTrigger value="imaging">{t('results.imaging')}</TabsTrigger>}
         </TabsList>
 
-        {/* Tab: Top diseases */}
+        {/* Top diseases */}
         <TabsContent value="diseases" className="mt-4">
           <div className="space-y-4">
             {result.top_diseases.slice(0, 5).map((disease, i) => (
               <GlowingEffect key={disease.name} className="rounded-2xl">
                 <div className="rounded-2xl border bg-card p-5 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between gap-3 mb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-3xl font-display font-bold text-muted-foreground/30">
                           #{i + 1}
                         </span>
                         <div>
-                          <h3 className="text-lg font-display font-semibold text-foreground">
-                            {disease.name}
-                          </h3>
-                          {disease.icd_code && (
-                            <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
-                              ICD-10: {disease.icd_code}
-                            </span>
-                          )}
+                          <h3 className="text-lg font-display font-semibold text-foreground">{disease.name}</h3>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            {disease.icd_code && (
+                              <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
+                                {disease.icd_code}
+                              </span>
+                            )}
+                            {(disease as any).category && (
+                              <span className="text-xs text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/30 px-1.5 py-0.5 rounded-md border border-teal-200 dark:border-teal-800">
+                                {(disease as any).category}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       {disease.description && (
-                        <p className="text-sm text-muted-foreground mt-2 ml-11">
+                        <p className="text-sm text-muted-foreground mt-2 ml-11 leading-relaxed">
                           {disease.description}
                         </p>
                       )}
@@ -175,7 +249,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                       <span className="text-2xl font-display font-bold text-teal-600 dark:text-teal-400">
                         {(disease.probability * 100).toFixed(0)}%
                       </span>
-                      <p className="text-xs text-muted-foreground">probability</p>
+                      <p className="text-xs text-muted-foreground">{t('results.probability')}</p>
                     </div>
                   </div>
                   <Progress value={disease.probability * 100} className="h-2" />
@@ -185,7 +259,7 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-teal-600 dark:text-teal-400 hover:underline mt-2"
                   >
-                    Learn more <ExternalLink className="w-3 h-3" />
+                    {t('results.learnMore')} <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
               </GlowingEffect>
@@ -193,101 +267,116 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
           </div>
         </TabsContent>
 
-        {/* Tab: SHAP / symptom importance */}
+        {/* SHAP */}
         <TabsContent value="shap" className="mt-4">
           <div className="rounded-2xl border bg-card p-6">
             <div className="flex items-start gap-2 mb-4">
               <Info className="w-4 h-4 text-teal-500 mt-0.5" />
-              <p className="text-sm text-muted-foreground">
-                SHAP values explain which symptoms most influenced the AI's prediction. Higher
-                values = greater impact.
-              </p>
+              <p className="text-sm text-muted-foreground">{t('results.shapInfo')}</p>
             </div>
             {result.shap_values && result.shap_values.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart
-                  data={result.shap_values.slice(0, 10)}
-                  layout="vertical"
-                  margin={{ left: 0, right: 20, top: 0, bottom: 0 }}
-                >
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis
-                    type="category"
-                    dataKey="symptom"
-                    width={160}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <Tooltip
-                    formatter={(v: number) => [v.toFixed(3), 'SHAP value']}
-                    contentStyle={{
-                      borderRadius: '12px',
-                      border: '1px solid var(--border)',
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
-                    {result.shap_values.slice(0, 10).map((_, idx) => (
-                      <Cell key={idx} fill={SHAP_COLORS[idx % SHAP_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <ResponsiveContainer width="100%" height={Math.max(200, result.shap_values.slice(0, 10).length * 36)}>
+                  <BarChart
+                    data={result.shap_values.slice(0, 10)}
+                    layout="vertical"
+                    margin={{ left: 0, right: 30, top: 4, bottom: 4 }}
+                  >
+                    <XAxis type="number" tick={{ fontSize: 11 }} domain={[0, 'dataMax']} />
+                    <YAxis type="category" dataKey="symptom" width={170} tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      formatter={(v: number) => [v.toFixed(3), t('results.importanceScore')]}
+                      contentStyle={{ borderRadius: '12px', border: '1px solid var(--border)', fontSize: 12 }}
+                    />
+                    <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
+                      {result.shap_values.slice(0, 10).map((_, idx) => (
+                        <Cell key={idx} fill={SHAP_COLORS[idx % SHAP_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {result.shap_values.slice(0, 6).map((sv, idx) => (
+                    <div key={sv.symptom} className="flex items-center gap-2 text-xs">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SHAP_COLORS[idx % SHAP_COLORS.length] }} />
+                      <span className="text-foreground font-medium capitalize">{sv.symptom}</span>
+                      <span className="text-muted-foreground ml-auto">{getImportanceLabel(sv.importance)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             ) : (
-              <p className="text-sm text-muted-foreground">No symptom analysis data available.</p>
+              <div className="flex items-center gap-3 p-4 rounded-xl bg-muted/40 text-sm text-muted-foreground">
+                <Info className="w-4 h-4 shrink-0" />
+                {t('results.noShapData')}
+              </div>
             )}
           </div>
         </TabsContent>
 
-        {/* Tab: Knowledge graph reasoning */}
+        {/* Reasoning */}
         <TabsContent value="reasoning" className="mt-4">
-          <div className="rounded-2xl border bg-card p-6">
-            <h3 className="text-lg font-display font-semibold text-foreground mb-4">
-              Knowledge Graph Reasoning
-            </h3>
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                {result.kg_reasoning_snippet || 'No reasoning data available.'}
+          <div className="rounded-2xl border bg-card p-6 space-y-5">
+            <div className="flex items-center gap-2">
+              <Brain className="w-5 h-5 text-violet-500" />
+              <h3 className="text-lg font-display font-semibold text-foreground">{t('results.aiReasoningTitle')}</h3>
+            </div>
+            {reasoningSections.length > 0 ? (
+              <div className="space-y-4">
+                {reasoningSections.map((section, i) => (
+                  <div key={i} className="rounded-xl border bg-muted/30 p-4 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <ReasoningIcon icon={section.icon} />
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{section.label}</span>
+                    </div>
+                    <p className="text-sm text-foreground leading-relaxed pl-6">{section.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                {result.kg_reasoning_snippet || t('results.noReasoningData')}
               </p>
+            )}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">{t('results.differentialFlow')}</p>
+              <div className="p-4 rounded-xl bg-muted/50 font-mono text-xs space-y-2">
+                {result.top_diseases.slice(0, 3).map((d, i) => (
+                  <div key={d.name} className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: SHAP_COLORS[i] }} />
+                    <span className="text-muted-foreground">{t('results.patientSymptoms')}</span>
+                    <span className="text-muted-foreground">──→</span>
+                    <span className="text-foreground font-medium">{d.name}</span>
+                    <span className="text-muted-foreground ml-auto">{(d.probability * 100).toFixed(0)}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            {/* Simple text-based node visualization */}
-            <div className="mt-6 p-4 rounded-xl bg-muted/50 font-mono text-xs space-y-2">
-              {result.top_diseases.slice(0, 3).map((d) => (
-                <div key={d.name} className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
-                  <span className="text-muted-foreground">Patient Phenotype</span>
-                  <span className="text-muted-foreground">──→</span>
-                  <span className="text-foreground font-medium">{d.name}</span>
-                  <span className="text-muted-foreground ml-auto">
-                    ({(d.probability * 100).toFixed(0)}%)
-                  </span>
+            {result.kg_suggestions && result.kg_suggestions.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{t('results.kgAlsoSuggests')}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {result.kg_suggestions.map((s) => (
+                    <span key={s} className="text-xs px-2.5 py-1 rounded-full border border-border bg-muted/50 text-muted-foreground">{s}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         </TabsContent>
 
-        {/* Tab: Grad-CAM */}
+        {/* Imaging */}
         {gradcamUrl && (
           <TabsContent value="imaging" className="mt-4">
             <div className="rounded-2xl border bg-card p-6">
-              <h3 className="text-lg font-display font-semibold text-foreground mb-2">
-                Grad-CAM Heatmap
-              </h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Areas highlighted in red indicate regions the AI focused on most during analysis.
-              </p>
-              <img
-                src={gradcamUrl}
-                alt="Grad-CAM visualization"
-                className="w-full rounded-xl"
-              />
+              <h3 className="text-lg font-display font-semibold text-foreground mb-2">{t('results.gradcamTitle')}</h3>
+              <p className="text-sm text-muted-foreground mb-4">{t('results.gradcamDesc')}</p>
+              <img src={gradcamUrl} alt="Grad-CAM visualization" className="w-full rounded-xl" />
               {result.image_result && (
                 <p className="text-sm text-muted-foreground mt-3">
-                  Image prediction:{' '}
-                  <span className="font-medium text-foreground">
-                    {result.image_result.disease}
-                  </span>{' '}
-                  ({(result.image_result.confidence * 100).toFixed(0)}% confidence)
+                  {t('results.imagePrediction')}:{' '}
+                  <span className="font-medium text-foreground">{result.image_result.disease}</span>{' '}
+                  ({(result.image_result.confidence * 100).toFixed(0)}% {t('results.confidence')})
                 </p>
               )}
             </div>
@@ -296,53 +385,29 @@ export function DiagnosisResult({ result, onReset }: DiagnosisResultProps) {
       </Tabs>
 
       {/* Contact specialist */}
-      <div
-        className={`rounded-2xl border p-6 ${
-          isHighRisk
-            ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10'
-            : ''
-        }`}
-      >
+      <div className={`rounded-2xl border p-6 ${isHighRisk ? 'border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/10' : ''}`}>
         <h3 className="text-lg font-display font-semibold text-foreground mb-1">
-          {isHighRisk ? '🚨 Speak with a Specialist Now' : 'Contact a Specialist'}
+          {isHighRisk ? t('results.speakWithSpecialist') : t('results.contactSpecialist')}
         </h3>
         <p className="text-sm text-muted-foreground mb-5">
-          {isHighRisk
-            ? 'Your risk level is high. We strongly recommend consulting a specialist as soon as possible.'
-            : 'Want a second opinion? Connect with a board-certified rare disease specialist.'}
+          {isHighRisk ? t('results.highRiskMessage') : t('results.consultMessage')}
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button
-            variant="teal"
-            className="gap-2"
-            onClick={() => startConsultation('video')}
-            disabled={!!consultLoading}
-          >
+          <Button variant="teal" className="gap-2" onClick={() => startConsultation('video')} disabled={!!consultLoading}>
             <Video className="w-4 h-4" />
-            {consultLoading === 'video' ? 'Connecting…' : 'Video Call'}
+            {consultLoading === 'video' ? t('results.connecting') : t('results.videoCall')}
           </Button>
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => startConsultation('voice')}
-            disabled={!!consultLoading}
-          >
+          <Button variant="outline" className="gap-2" onClick={() => startConsultation('voice')} disabled={!!consultLoading}>
             <Phone className="w-4 h-4" />
-            {consultLoading === 'voice' ? 'Connecting…' : 'Voice Call'}
+            {consultLoading === 'voice' ? t('results.connecting') : t('results.voiceCall')}
           </Button>
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => startConsultation('chat')}
-            disabled={!!consultLoading}
-          >
+          <Button variant="outline" className="gap-2" onClick={() => startConsultation('chat')} disabled={!!consultLoading}>
             <MessageCircle className="w-4 h-4" />
-            {consultLoading === 'chat' ? 'Connecting…' : 'Chat'}
+            {consultLoading === 'chat' ? t('results.connecting') : t('results.chat')}
           </Button>
         </div>
       </div>
 
-      {/* Feedback */}
       <FeedbackWidget context="diagnosis" />
     </div>
   )
